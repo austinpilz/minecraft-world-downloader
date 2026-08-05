@@ -30,6 +30,8 @@ public class ServerAuthenticator {
 
         if (str.getStatus() != 200) {
             System.out.println("WARNING: Connection attempt by using pretending to be you! Closing connection.");
+            System.out.println("hasJoined check failed for username '" + username + "'. Status: " + str.getStatus()
+                + " " + str.getStatusText() + ". Body: " + str.getBody());
             throw new RuntimeException("Server could not authenticate client! " + str.getBody());
         } else {
             devPrint("User identity confirmed with Mojang.");

@@ -248,16 +248,19 @@ public class EncryptionManager {
     }
 
     private void sendReplacementEncryptionConfirmationWithProfileKey() {
+        // Verify the connecting client's own join first - Mojang's hasJoined only matches the *most recent*
+        // join registered for a username, so if our own join below ran first it would clobber the client's
+        // registration (this matters whenever both ends use the same account, which they must for this to
+        // work at all).
+        boolean server = disconnectOnError(() -> new ServerAuthenticator(username).makeRequest(generateClientVerificationHash()));
+        if (!server) { return; }
+
         // authenticate the client so that the remote server will accept us
         boolean client = disconnectOnError(() -> clientAuthenticator.makeRequest(generateServerHash()));
         if (!client) { return; }
 
         // get keys
         attempt(() -> clientAuthenticator.getClientProfileKeyPair(this));
-
-        // verify the connecting client connection is who they claim to be
-        boolean server = disconnectOnError(() -> new ServerAuthenticator(username).makeRequest(generateServerHash()));
-        if (!server) { return; }
 
         // encryption confirmation
         attempt(() -> {
@@ -306,13 +309,16 @@ public class EncryptionManager {
      */
     private void sendReplacementEncryptionConfirmation() {
         if (shouldAuthenticate) {
+            // Verify the connecting client's own join first - Mojang's hasJoined only matches the *most
+            // recent* join registered for a username, so doing our own join (below) first would clobber
+            // the client's registration whenever both ends use the same account, which they must for this
+            // to work at all.
+            boolean server = disconnectOnError(() -> new ServerAuthenticator(username).makeRequest(generateClientVerificationHash()));
+            if (!server) { return; }
+
             // authenticate the client so that the remote server will accept us
             boolean client = disconnectOnError(() -> clientAuthenticator.makeRequest(generateServerHash()));
             if (!client) { return; }
-
-            // verify the connecting client connection is who they claim to be
-            boolean server = disconnectOnError(() -> new ServerAuthenticator(username).makeRequest(generateServerHash()));
-            if (!server) { return; }
         }
 
         // encryption confirmation
@@ -336,16 +342,32 @@ public class EncryptionManager {
     }
 
     /**
-     * Generate the server hash to be used for the Mojang session server.
+     * Generate the server hash to be used when we join the remote server's Mojang session ourselves. This must
+     * match what the remote server computes to verify us, so it uses the remote server's real public key - the one
+     * it gave us in its own Encryption Request.
      * @return the generated hash. See https://wiki.vg/Protocol
      */
     private String generateServerHash() {
+        return generateServerHash(serverRealPublicKey.getEncoded());
+    }
+
+    /**
+     * Generate the server hash to be used to verify the connecting client's Mojang session via hasJoined. The
+     * client computed its own hash using the public key it received in the (fake) Encryption Request we sent it -
+     * our own key pair, not the remote server's - so we must reproduce that here to get a matching hash.
+     * @return the generated hash. See https://wiki.vg/Protocol
+     */
+    private String generateClientVerificationHash() {
+        return generateServerHash(serverKeyPair.getPublic().getEncoded());
+    }
+
+    private String generateServerHash(byte[] publicKeyEncoded) {
         AtomicReference<MessageDigest> sha1 = new AtomicReference<>();
         attempt(() -> sha1.set(MessageDigest.getInstance("SHA1")));
 
         sha1.get().update(serverId.getBytes(StandardCharsets.US_ASCII));
         sha1.get().update(clientSharedSecret);
-        sha1.get().update(serverRealPublicKey.getEncoded());
+        sha1.get().update(publicKeyEncoded);
 
         return new BigInteger(sha1.get().digest()).toString(16);
     }
