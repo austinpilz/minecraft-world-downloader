@@ -7,6 +7,8 @@ import game.data.coordinates.Coordinate3D;
 import game.data.container.Slot;
 import game.data.container.Slot_1_12;
 import game.data.coordinates.CoordinateDouble3D;
+
+import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.function.Supplier;
 import packets.version.DataTypeProvider_1_13;
@@ -71,21 +73,23 @@ public class DataTypeProvider {
 
     public long readVarLong() {
         int numRead = 0;
-        long result = 0;
+        long result = 0L;
         byte read;
+
         do {
             if (!hasNext()) {
                 throw new RuntimeException("Invalid VarLong found! Packet structure may have changed.");
             }
+
             read = readNext();
-            int value = (read & 0b01111111);
+            long value = (read & 0b0111_1111);
             result |= (value << (7 * numRead));
 
             numRead++;
             if (numRead > 10) {
                 throw new RuntimeException("VarLong is too big");
             }
-        } while ((read & 0b10000000) != 0);
+        } while ((read & 0b1000_0000) != 0);
 
         return result;
     }
@@ -122,11 +126,9 @@ public class DataTypeProvider {
     public String readString() {
         int stringSize = readVarInt();
 
-        StringBuilder sb = new StringBuilder();
-        while (stringSize-- > 0) {
-            sb.appendCodePoint(readNext() & 0xFF);
-        }
-        return sb.toString();
+        byte[] bytes = readByteArray(stringSize);
+
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     public int readVarInt() {

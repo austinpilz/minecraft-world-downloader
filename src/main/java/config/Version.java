@@ -2,6 +2,8 @@ package config;
 
 public enum Version {
     // version numbers correspond to the earliest full release
+    // https://minecraft.wiki/w/Java_Edition_protocol/Packets
+    // https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Protocol_History
     V1_12(317, 1132),
     V1_13(341, 1444),
     V1_14(440, 1901),
@@ -17,6 +19,12 @@ public enum Version {
     V1_20_6(766, 3839),
     V1_21(767, 3953),
     V1_21_2(768, 4080), //1.21.3 has compatible protocol
+    V1_21_4(769, 4189),
+    V1_21_5(770, 4325),
+    V1_21_6(771, 4435),
+    V1_21_8(772, 4440), //includes 1.21.7
+    V1_21_10(773, 4556), //includes 1.21.9
+    V1_21_11(774, 4671),
     ANY(0, 0);
 
     public final int dataVersion;
