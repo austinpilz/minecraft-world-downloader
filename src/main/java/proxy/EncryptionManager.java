@@ -100,15 +100,16 @@ public class EncryptionManager {
     }
 
     /**
-     * Simple method to make exception handling cleaner.
+     * Simple method to make exception handling cleaner. Failures here (e.g. an expired manual auth token, or a
+     * transient Mojang API error) only affect the current connection - rethrow so the proxy's outer per-connection
+     * exception handling (in ProxyServer) can reset and keep waiting for new connections, instead of taking down
+     * the whole process.
      */
     private static void attempt(IExceptionHandler r) {
         try {
             r.run();
         } catch (Exception ex) {
-            ex.printStackTrace();
-            System.out.println("Encryption failure! Terminating.");
-            System.exit(1);
+            throw new RuntimeException("Encryption failure: " + ex.getMessage(), ex);
         }
     }
 
@@ -121,11 +122,18 @@ public class EncryptionManager {
         } catch (Exception ex) {
             ex.printStackTrace();
 
-            attempt(() -> streamToServer.close());
-            attempt(() -> streamToClient.close());
+            // best-effort cleanup - a failure closing one stream shouldn't stop us from closing the other
+            attemptQuiet(() -> streamToServer.close());
+            attemptQuiet(() -> streamToClient.close());
             return false;
         }
         return true;
+    }
+
+    private static void attemptQuiet(IExceptionHandler r) {
+        try {
+            r.run();
+        } catch (Exception ignored) { }
     }
 
     /**
@@ -423,11 +431,9 @@ public class EncryptionManager {
 
         try {
             return decryptor.update(bytes);
-        } catch (Exception e) {
-            e.printStackTrace();
-            System.exit(1);
+        } catch (Exception ex) {
+            throw new RuntimeException("Could not decrypt stream!", ex);
         }
-        return null;
     }
 
     public byte[] clientBoundDecrypt(byte[] bytes) {
