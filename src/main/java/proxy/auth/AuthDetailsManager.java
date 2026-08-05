@@ -3,6 +3,7 @@ package proxy.auth;
 import config.Config;
 
 import gui.GuiManager;
+import javafx.application.Platform;
 import java.io.IOException;
 import java.util.function.Consumer;
 
@@ -45,20 +46,37 @@ public abstract class AuthDetailsManager {
         };
     }
 
+    /**
+     * Runs the (network-bound) auth check off the calling thread, since this is called directly from
+     * JavaFX button handlers and a slow/stalled request would otherwise freeze the whole UI.
+     */
     public static void validateAuthStatus(Consumer<String> onSuccess, Consumer<String> onError) {
-        try {
-            AuthDetails details = loadAuthDetails();
+        new Thread(() -> {
+            String successUsername = null;
+            String errorMessage = null;
 
-            boolean isValid = details.isValid();
-            if (isValid) {
-                onSuccess.accept(details.getUsername());
-            } else {
-                AuthenticationMethod method = Config.getAuthMethod();
-                onError.accept(method.getErrorMessage());
+            try {
+                AuthDetails details = loadAuthDetails();
+
+                if (details.isValid()) {
+                    successUsername = details.getUsername();
+                } else {
+                    errorMessage = Config.getAuthMethod().getErrorMessage();
+                }
+            } catch (IOException | RuntimeException e) {
+                errorMessage = "Exception occurred: " + e.getMessage();
             }
-        } catch (IOException e) {
-            onError.accept("Exception occurred: " + e.getMessage());
-        }
+
+            String finalSuccessUsername = successUsername;
+            String finalErrorMessage = errorMessage;
+            Platform.runLater(() -> {
+                if (finalSuccessUsername != null) {
+                    onSuccess.accept(finalSuccessUsername);
+                } else {
+                    onError.accept(finalErrorMessage);
+                }
+            });
+        }, "auth-validate").start();
     }
 
     public AuthDetails getAuthDetails() throws IOException {

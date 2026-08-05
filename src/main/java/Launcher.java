@@ -1,4 +1,5 @@
 import config.Config;
+import kong.unirest.Unirest;
 
 import util.PathUtils;
 
@@ -11,6 +12,11 @@ import static util.ExceptionHandling.attemptQuiet;
 
 public class Launcher {
     public static void main(String[] args) throws URISyntaxException {
+        // Unirest's defaults (10s connect / 60s socket) can make an auth request that stalls
+        // (bad network, overzealous firewall, etc.) look like the whole app has frozen, especially
+        // since some callers make these requests on the JavaFX UI thread. Fail faster instead.
+        Unirest.config().connectTimeout(8000).socketTimeout(15000);
+
         fixCwd();
 
         Config.init(args);

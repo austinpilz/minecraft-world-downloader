@@ -301,8 +301,9 @@ public class GuiSettings {
                 return;
             }
         }
+        // settingsComplete() may validate an access token over the network in the background;
+        // it closes the settings window itself once that (or the rest of startup) actually completes.
         config.settingsComplete();
-        GuiManager.closeSettings();
     }
 
     private void save() {

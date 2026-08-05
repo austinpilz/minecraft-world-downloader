@@ -184,11 +184,40 @@ public class Config {
 
         // auth
         boolean hasAccessToken = this.accessToken != null && !this.accessToken.equals("");
-        if (hasAccessToken) {
-            this.manualAuth = AuthDetails.fromAccessToken(accessToken);
-            this.authMethod = AuthenticationMethod.MANUAL;
+        if (!hasAccessToken) {
+            finishSettingsComplete();
+            return;
         }
 
+        // Fetching the profile for the given token is a network call - run it off whatever thread called
+        // this (often the JavaFX UI thread from the settings Save button) so a slow/stalled request
+        // doesn't freeze the app. loadSceneMap() below needs the FX thread when a GUI is present, so hop
+        // back via Platform.runLater there; --no-gui mode has no such requirement and can continue directly.
+        new Thread(() -> {
+            AuthDetails resolvedAuth;
+            try {
+                resolvedAuth = AuthDetails.fromAccessToken(accessToken);
+            } catch (RuntimeException ex) {
+                System.err.println("Could not validate the given access token: " + ex.getMessage());
+                resolvedAuth = AuthDetails.INVALID;
+            }
+
+            AuthDetails finalResolvedAuth = resolvedAuth;
+            Runnable continueStartup = () -> {
+                this.manualAuth = finalResolvedAuth;
+                this.authMethod = AuthenticationMethod.MANUAL;
+                finishSettingsComplete();
+            };
+
+            if (disableGui) {
+                continueStartup.run();
+            } else {
+                Platform.runLater(continueStartup);
+            }
+        }, "settings-auth-check").start();
+    }
+
+    private void finishSettingsComplete() {
         // round to regions
         centerX = (centerX >> 9) << 9;
         centerZ = (centerZ >> 9) << 9;
@@ -197,6 +226,10 @@ public class Config {
         WorldManager.getInstance().updateExtendedRenderDistance(extendedRenderDistance);
 
         writeSettings();
+
+        if (!disableGui) {
+            GuiManager.closeSettings();
+        }
 
         if (isStarted) {
             return;
