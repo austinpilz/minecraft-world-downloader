@@ -1,5 +1,7 @@
 package game.data.chunk.version;
 
+import config.Config;
+import config.Version;
 import game.data.chunk.Chunk;
 import game.data.chunk.palette.DirectPalette;
 import game.data.chunk.palette.Palette;
@@ -59,12 +61,35 @@ public class ChunkSection_1_18 extends ChunkSection_1_16 {
         packet.writeShort(blockCount);
         palette.write(packet);
 
-        packet.writeVarInt(blocks.length);
-        packet.writeLongArray(blocks);
+        if (Config.versionReporter().isAtLeast(Version.V1_21_11)) {
+            // 1.21.11+ PalettedContainer.write uses fixed-size long arrays.
+            writeFixedLongArray(packet, blocks, ChunkSection_1_16.longsRequired(palette.getBitsPerBlock()));
+        } else {
+            packet.writeVarInt(blocks.length);
+            packet.writeLongArray(blocks);
+        }
 
         biomePalette.write(packet);
-        packet.writeVarInt(biomes.length);
-        packet.writeLongArray(biomes);
+
+        if (Config.versionReporter().isAtLeast(Version.V1_21_11)) {
+            // 1.21.11+ PalettedContainer.write uses fixed-size long arrays.
+            writeFixedLongArray(packet, biomes, ChunkSection_1_16.longsRequiredBiomes(biomePalette.getBitsPerBlock()));
+        } else {
+            packet.writeVarInt(biomes.length);
+            packet.writeLongArray(biomes);
+        }
+    }
+
+    private void writeFixedLongArray(PacketBuilder packet, long[] data, int expectedLength) {
+        int dataLength = data == null ? 0 : data.length;
+        int copiedLength = Math.min(dataLength, expectedLength);
+
+        for (int i = 0; i < copiedLength; i++) {
+            packet.writeLong(data[i]);
+        }
+        for (int i = copiedLength; i < expectedLength; i++) {
+            packet.writeLong(0L);
+        }
     }
 
     public void setBiomes(long[] biomes) {

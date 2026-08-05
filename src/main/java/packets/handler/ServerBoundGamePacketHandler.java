@@ -36,6 +36,13 @@ public class ServerBoundGamePacketHandler extends PacketHandler {
 
         operations.put("MovePlayerPos", updatePlayerPosition);
         operations.put("MovePlayerRot", updatePlayerRotation);
+        operations.put("MovePlayerStatusOnly", provider -> {
+            // status-only movement update (e.g. sneak/sprint) with no position or rotation data
+            if (provider.remaining() > 0) {
+                provider.readNext();
+            }
+            return true;
+        });
         operations.put("MovePlayerPosRot", (provider) -> {
             updatePlayerPosition.apply(provider);
             updatePlayerRotation.apply(provider);

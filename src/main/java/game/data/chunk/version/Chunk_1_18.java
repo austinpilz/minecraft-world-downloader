@@ -1,6 +1,7 @@
 package game.data.chunk.version;
 
 import config.Config;
+import config.Version;
 import game.data.chunk.BlockEntityRegistry;
 import game.data.chunk.ChunkSection;
 import game.data.chunk.palette.BlockState;
@@ -17,6 +18,7 @@ import packets.builder.PacketBuilder;
 import se.llbit.nbt.CompoundTag;
 import se.llbit.nbt.IntTag;
 import se.llbit.nbt.ListTag;
+import se.llbit.nbt.LongArrayTag;
 import se.llbit.nbt.NamedTag;
 import se.llbit.nbt.SpecificTag;
 import se.llbit.nbt.StringTag;
@@ -98,6 +100,97 @@ public class Chunk_1_18 extends Chunk_1_17 {
         return null;
     }
 
+    @Override
+    protected void parseHeightMaps(DataTypeProvider dataProvider) {
+        if (!Config.versionReporter().isAtLeast(Version.V1_21_11)) {
+            super.parseHeightMaps(dataProvider);
+            return;
+        }
+
+        // 1.21.11+ sends heightmaps as a raw count-prefixed list of (type, longCount, longs)
+        // instead of an NBT compound tag.
+        CompoundTag map = new CompoundTag();
+
+        int count = dataProvider.readVarInt();
+        for (int i = 0; i < count; i++) {
+            int type = dataProvider.readVarInt();
+            int longCount = dataProvider.readVarInt();
+            long[] data = dataProvider.readLongArray(longCount);
+
+            map.add(heightmapName(type), new LongArrayTag(data));
+        }
+
+        heightMap = map;
+    }
+
+    @Override
+    protected void writeHeightMaps(PacketBuilder packet) {
+        if (!Config.versionReporter().isAtLeast(Version.V1_21_11)) {
+            super.writeHeightMaps(packet);
+            return;
+        }
+
+        if (!(heightMap instanceof CompoundTag compound)) {
+            packet.writeVarInt(0);
+            return;
+        }
+
+        int count = 0;
+        for (NamedTag named : compound) {
+            if (heightmapType(named.name()) >= 0) {
+                count++;
+            }
+        }
+
+        packet.writeVarInt(count);
+        for (NamedTag named : compound) {
+            int type = heightmapType(named.name());
+            if (type < 0) {
+                continue;
+            }
+
+            long[] data = compound.get(named.name()).longArray();
+            packet.writeVarInt(type);
+            packet.writeVarInt(data.length);
+            packet.writeLongArray(data);
+        }
+    }
+
+    private String heightmapName(int type) {
+        return switch (type) {
+            case 0 -> "WORLD_SURFACE_WG";
+            case 1 -> "WORLD_SURFACE";
+            case 2 -> "OCEAN_FLOOR_WG";
+            case 3 -> "OCEAN_FLOOR";
+            case 4 -> "MOTION_BLOCKING";
+            case 5 -> "MOTION_BLOCKING_NO_LEAVES";
+            default -> "UNKNOWN_" + type;
+        };
+    }
+
+    private int heightmapType(String name) {
+        return switch (name) {
+            case "WORLD_SURFACE_WG" -> 0;
+            case "WORLD_SURFACE" -> 1;
+            case "OCEAN_FLOOR_WG" -> 2;
+            case "OCEAN_FLOOR" -> 3;
+            case "MOTION_BLOCKING" -> 4;
+            case "MOTION_BLOCKING_NO_LEAVES" -> 5;
+            default -> -1;
+        };
+    }
+
+    private long[] readPalettedContainerData(DataTypeProvider dataProvider, Palette palette, PaletteType type) {
+        if (Config.versionReporter().isAtLeast(Version.V1_21_11)) {
+            // 1.21.11+ PalettedContainer.write uses fixed-size long arrays.
+            int longsExpected = type == PaletteType.BIOMES
+                ? ChunkSection_1_18.longsRequiredBiomes(palette.getBitsPerBlock())
+                : ChunkSection_1_18.longsRequired(palette.getBitsPerBlock());
+            return dataProvider.readLongArray(longsExpected);
+        }
+
+        return dataProvider.readLongArray(dataProvider.readVarInt());
+    }
 
     /**
      * Read a chunk column for 1.18
@@ -117,14 +210,12 @@ public class Chunk_1_18 extends Chunk_1_17 {
             }
 
             section.setBlockCount(blockCount);
-            section.setBlocks(dataProvider.readLongArray(dataProvider.readVarInt()));
+            section.setBlocks(readPalettedContainerData(dataProvider, blockPalette, PaletteType.BLOCKS));
 
             Palette biomePalette = Palette.readPalette(dataProvider, PaletteType.BIOMES);
             section.setBiomePalette(biomePalette);
 
-            // check how many longs we expect, if there's more discard the rest
-            int longsExpectedBiomes = ChunkSection_1_18.longsRequiredBiomes(biomePalette.getBitsPerBlock());
-            section.setBiomes(dataProvider.readLongArray(dataProvider.readVarInt(), longsExpectedBiomes));
+            section.setBiomes(readPalettedContainerData(dataProvider, biomePalette, PaletteType.BIOMES));
 
             // May replace an existing section or a null one
             setChunkSection(sectionY, section);
@@ -183,7 +274,9 @@ public class Chunk_1_18 extends Chunk_1_17 {
             if (tag instanceof CompoundTag entity) {
                 String blockEntityID = RegistryManager.getInstance().getBlockEntityRegistry().getBlockEntityName(type);
 
-                entity.add("id", new StringTag(blockEntityID));
+                if (blockEntityID != null) {
+                    entity.add("id", new StringTag(blockEntityID));
+                }
                 addBlockEntity(new Coordinate3D(x, y, z), entity);
             }
         }
