@@ -25,6 +25,8 @@ public enum Version {
     V1_21_8(772, 4440), //includes 1.21.7
     V1_21_10(773, 4556), //includes 1.21.9
     V1_21_11(774, 4671),
+    V26_1_2(775, 4790), //includes 26.1 and 26.1.1
+    V26_2(776, 4903),
     ANY(0, 0);
 
     public final int dataVersion;
