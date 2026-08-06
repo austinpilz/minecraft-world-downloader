@@ -4,6 +4,8 @@ import org.xbill.DNS.Lookup;
 import org.xbill.DNS.Record;
 import org.xbill.DNS.SRVRecord;
 import org.xbill.DNS.Type;
+import proxy.socks.Socks5Client;
+import proxy.socks.SocksProxyConfig;
 
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -13,13 +15,20 @@ import static util.ExceptionHandling.attempt;
 
 public class ConnectionDetails {
     private final int DEFAULT_PORT = 25565;
+    private final int SOCKS_CONNECT_TIMEOUT_MS = 10_000;
 
     private String host;
     private int portRemote;
     private int portLocal;
+    private SocksProxyConfig socksProxy;
 
     public ConnectionDetails(String host, int portLocal, boolean performSrvLookup) {
+        this(host, portLocal, performSrvLookup, new SocksProxyConfig(false, null, 0, null, null));
+    }
+
+    public ConnectionDetails(String host, int portLocal, boolean performSrvLookup, SocksProxyConfig socksProxy) {
         this.portRemote = DEFAULT_PORT;
+        this.socksProxy = socksProxy;
 
         if (host.contains(":")) {
             String[] hostParts = host.split(":");
@@ -57,6 +66,9 @@ public class ConnectionDetails {
     }
 
     public Socket getClientSocket() throws IOException {
+        if (socksProxy != null && socksProxy.isEnabled()) {
+            return Socks5Client.connect(socksProxy, host, portRemote, SOCKS_CONNECT_TIMEOUT_MS);
+        }
         return new Socket(host, portRemote);
     }
 

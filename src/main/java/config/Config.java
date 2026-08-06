@@ -29,6 +29,7 @@ import proxy.PacketInjector;
 import proxy.auth.AuthDetails;
 import proxy.auth.AuthenticationMethod;
 import proxy.auth.MicrosoftAuthHandler;
+import proxy.socks.SocksProxyConfig;
 import util.LocalDateTimeAdapter;
 import util.PathUtils;
 
@@ -238,7 +239,9 @@ public class Config {
         isStarted = true;
 
         versionHandler = ProtocolVersionHandler.getInstance();
-        connectionDetails = new ConnectionDetails(server, portLocal, !disableSrvLookup);
+        SocksProxyConfig socksProxy = new SocksProxyConfig(
+            socksProxyEnabled, socksProxyHost, socksProxyPort, socksProxyUsername, socksProxyPassword);
+        connectionDetails = new ConnectionDetails(server, portLocal, !disableSrvLookup, socksProxy);
 
         if (!disableGui) {
             GuiManager.loadSceneMap();
@@ -471,6 +474,26 @@ public class Config {
             usage = "Enable automatically switching to cave render mode when underground.")
     public boolean enableCaveRenderMode = false;
 
+    @Option(name = "--socks-proxy",
+            usage = "Route the outbound connection to the Minecraft server through a SOCKS5 proxy.")
+    public boolean socksProxyEnabled = false;
+
+    @Option(name = "--socks-proxy-host",
+            usage = "SOCKS5 proxy hostname or IP address.")
+    public String socksProxyHost = "";
+
+    @Option(name = "--socks-proxy-port",
+            usage = "SOCKS5 proxy port.")
+    public int socksProxyPort = 1080;
+
+    @Option(name = "--socks-proxy-username",
+            usage = "Username for SOCKS5 proxy authentication, if required.")
+    public transient String socksProxyUsername = "";
+
+    @Option(name = "--socks-proxy-password",
+            usage = "Password for SOCKS5 proxy authentication, if required.")
+    public transient String socksProxyPassword = "";
+
     // not really important enough to have an option for, can change it in config file
     public boolean smoothZooming = true;
 
@@ -539,6 +562,26 @@ public class Config {
     }
     public static boolean enableCaveRenderMode() {
         return instance.enableCaveRenderMode;
+    }
+
+    public static boolean isSocksProxyEnabled() {
+        return instance.socksProxyEnabled;
+    }
+
+    public static String getSocksProxyHost() {
+        return instance.socksProxyHost;
+    }
+
+    public static int getSocksProxyPort() {
+        return instance.socksProxyPort;
+    }
+
+    public static String getSocksProxyUsername() {
+        return instance.socksProxyUsername;
+    }
+
+    public static String getSocksProxyPassword() {
+        return instance.socksProxyPassword;
     }
 
     public static MicrosoftAuthHandler getMicrosoftAuth() {
