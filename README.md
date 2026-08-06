@@ -1,108 +1,33 @@
 # minecraft-world-downloader
-A Minecraft world downloader that works as a proxy server between the client and the server to read & save chunk data. Download multiplayer worlds by connecting to them and walking around. Chunks can be sent back to the client to extend the render distance.
+A Minecraft world downloader that works as a proxy server between the client and the server to read & save chunk data. 
+Download multiplayer worlds by connecting to them and walking around. Chunks can be sent back to the client to extend
+the render distance.
 
+| Minecraft version    | Protocol | Data version |
+|----------------------|---------:|-------------:|
+| 26.2                 |      776 |         4903 |
+| 26.1, 26.1.1, 26.1.2 |      775 |         4790 |
+| 1.21.11              |      774 |         4671 |
+| 1.21.9, 1.21.10      |      773 |         4556 |
+| 1.21.7, 1.21.8       |      772 |         4440 |
+| 1.21.6               |      771 |         4435 |
+| 1.21.5               |      770 |         4325 |
+| 1.21.4               |      769 |         4189 |
+| 1.21.2, 1.21.3       |      768 |         4080 |
+| 1.21, 1.21.1         |      767 |         3953 |
+| 1.20.5, 1.20.6       |      766 |         3839 |
+| 1.20.3, 1.20.4       |      765 |         3700 |
+| 1.20.2               |      764 |         3578 |
+| 1.20, 1.20.1         |      763 |         3463 |
+| 1.19.4               |      762 |         3337 |
+| 1.19.3               |      761 |         3218 |
+| 1.19 - 1.19.2        |      759 |         3105 |
+| 1.18 - 1.18.2        |      757 |         2860 |
+| 1.17, 1.17.1         |      755 |         2724 |
+| 1.16.2 - 1.16.5      |      701 |         2578 |
+| 1.15.2               |      550 |         2200 |
+| 1.14.1 - 1.14.4      |      440 |         1901 |
+| 1.13.2               |      341 |         1444 |
+| 1.12.2               |      317 |         1132 |
 
-### Downloads  <a href="https://github.com/mircokroon/minecraft-world-downloader/releases/latest"><img align="right" src="https://img.shields.io/github/downloads/mircokroon/minecraft-world-downloader/total.svg"></a>
-Windows launcher: [world-downloader-launcher.exe](https://github.com/mircokroon/minecraft-world-downloader-launcher/releases/latest/download/world-downloader-launcher.exe)
-
-Latest cross-platform jar (command-line support): [world-downloader.jar](https://github.com/mircokroon/minecraft-world-downloader/releases/latest/download/world-downloader.jar)
-
-### Basic usage
-[Download](https://github.com/mircokroon/minecraft-world-downloader-launcher/releases/latest/download/world-downloader-launcher.exe) the latest release and run it. Enter the server address in the address field and press start.
-
-<img src="https://i.imgur.com/yH8SH5C.png">
-
-Instead of connecting to the server itself, connect to `localhost` in Minecraft to start downloading the world.
-<img src="https://i.imgur.com/wKMnXfq.png">
-
-If you run into any problems, check the [FAQ](https://github.com/mircokroon/minecraft-world-downloader/wiki/FAQ) page for some common issues. 
-
-### [Features](https://github.com/mircokroon/minecraft-world-downloader/wiki/Features)
-- Requires no client modifications and as such works with every game client, vanilla or not
-- Automatically merge into previous downloads or existing worlds
-- Save chests and other inventories by opening them
-- Extend the client's render distance by sending chunks downloaded previously back to the client
-- Overview map of chunks that have been saved:
-
-<img src="https://i.imgur.com/7FIJ6fZ.png" width="80%" title="Example of the GUI showing all the downloaded chunks as white squares, which ones from a previous download greyed out.">
-
-### Requirements
-- Java 21 or higher
-- Minecraft version 1.12.2+ // 1.13.2+ // 1.14.1+ // 1.15.2+ // 1.16.2+ // 1.17+ // 1.18+ // 1.19.3+ // 1.20+ // 1.21+ (through 26.2)
-
-### Command-line
-[Download](https://github.com/mircokroon/minecraft-world-downloader/releases/latest/download/world-downloader.jar) the cross-platform `world-downloader.jar` and run it using the command-line:
-
-```
-java -jar world-downloader.jar
-```
-
-Arguments can be specified to change the behaviour of the downloader. Running with `--help` shows all the available commands.
-```
-java -jar world-downloader.jar --help
-```
-
-The GUI can be disabled by including the `--no-gui` option, and specifying the server address:
-```
-java -jar world-downloader.jar --no-gui -s address.to.server.com
-```
-
-### Running on Linux
-To easily download the latest release using the terminal, the following commands can be used:
-```
-wget https://github.com/mircokroon/minecraft-world-downloader/releases/latest/download/world-downloader.jar
-java -jar world-downloader.jar -s address.to.server.com
-```
-
-When running headless Java, the GUI should be disabled by including the GUI option:
-```
-java -jar world-downloader.jar -s address.to.server.com --no-gui
-```
-
-Some linux distributions may require `-Djdk.gtk.version=2` for the GUI to work:
-```
-java -Djdk.gtk.version=2 -jar world-downloader.jar
-```
-
-
-### Building from source
-<details>
-  <summary>Dependencies on linux</summary>
-  
-  ### debian/ubuntu
-  
-  ```
-  sudo apt-get install default-jdk maven
-  ```
-
-  ### arch/manjaro
-  
-  ```
-  sudo pacman -S --needed jdk-openjdk maven
-  ```
-</details>
-
-<details>
-  <summary>Build project to executable jar file</summary>
-  
- Building the project manually can be done using Maven:
-  ```
-  git clone https://github.com/mircokroon/minecraft-world-downloader
-  cd minecraft-world-downloader
-  mvn package
-  java -jar ./target/world-downloader.jar -s address.to.server.com
-  ```
-
-</details>
-
-### Contact
-<details>
-  <summary>Contact information</summary>
-
-  For problems, bugs, feature requests and questions about how to use the application, please [open an issue](https://github.com/mircokroon/minecraft-world-downloader/issues/new/choose) or discussion on GitHub. 
-
-  For other inquiries, email: mircokroon.github@gmail.com
-  
-  If you want to support this project, you can [donate through GitHub](https://github.com/sponsors/mircokroon?frequency=one-time&amount=5)
-</details>
 
