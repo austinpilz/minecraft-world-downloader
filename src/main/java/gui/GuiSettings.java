@@ -70,8 +70,10 @@ public class GuiSettings {
     public Tab generalTab;
     public Tab authTab;
     public Tab realmsTab;
+    public Tab proxyTab;
     public RealmsTabController realmsController;
     public AuthTabController authController;
+    public ProxyTabController proxyController;
     public CheckBox enableDrawExtendedChunks;
     public CheckBox enableCaveRenderMode;
     public Label authResult;
@@ -100,7 +102,8 @@ public class GuiSettings {
 
         heights = Map.of(
             generalTab, 360,
-            realmsTab, 320
+            realmsTab, 320,
+            proxyTab, 330
         );
 
         // connection tab
@@ -326,6 +329,9 @@ public class GuiSettings {
         config.disableInfoMessages = !enableInfoMessages.isSelected();
         config.enableCaveRenderMode = enableCaveRenderMode.isSelected();
         config.drawExtendedChunks = enableDrawExtendedChunks.isSelected();
+
+        // proxy tab
+        proxyController.save(config);
 
         Config.save();
     }

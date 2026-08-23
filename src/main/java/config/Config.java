@@ -26,6 +26,7 @@ import packets.builder.PacketBuilder;
 import proxy.ConnectionDetails;
 import proxy.ConnectionManager;
 import proxy.PacketInjector;
+import proxy.SocksProxyDetails;
 import proxy.auth.AuthDetails;
 import proxy.auth.AuthenticationMethod;
 import proxy.auth.MicrosoftAuthHandler;
@@ -153,6 +154,32 @@ public class Config {
         instance.debugWriteChunkNbt = !instance.debugWriteChunkNbt;
     }
 
+    /**
+     * Called by SocksProxyHandler while parsing --socks-proxy. The host itself is written by the option's
+     * setter, this just enables the proxy and applies the port if one was included in the argument.
+     */
+    public static void enableSocksProxy(int port) {
+        instance.enableSocksProxy = true;
+
+        if (port > 0) {
+            instance.socksProxyPort = port;
+        }
+    }
+
+    /**
+     * The SOCKS proxy to route the outbound server connection through, or null when none is configured.
+     */
+    public static SocksProxyDetails getSocksProxy() {
+        if (!instance.enableSocksProxy || instance.socksProxyHost == null || instance.socksProxyHost.isBlank()) {
+            return null;
+        }
+
+        return new SocksProxyDetails(
+            instance.socksProxyHost.trim(), instance.socksProxyPort,
+            instance.socksProxyUsername, instance.socksProxyPassword
+        );
+    }
+
     public static void disableSettingsGui() {
         instance.guiOnlyMode = false;
     }
@@ -238,7 +265,13 @@ public class Config {
         isStarted = true;
 
         versionHandler = ProtocolVersionHandler.getInstance();
-        connectionDetails = new ConnectionDetails(server, portLocal, !disableSrvLookup);
+
+        SocksProxyDetails socksProxy = getSocksProxy();
+        if (socksProxy != null) {
+            socksProxy.installAuthenticator();
+            System.out.println("Connecting to " + server + " through SOCKS proxy " + socksProxy.getFriendlyHost() + ".");
+        }
+        connectionDetails = new ConnectionDetails(server, portLocal, !disableSrvLookup, socksProxy);
 
         if (!disableGui) {
             GuiManager.loadSceneMap();
@@ -470,6 +503,24 @@ public class Config {
     @Option(name = "--enable-cave-mode",
             usage = "Enable automatically switching to cave render mode when underground.")
     public boolean enableCaveRenderMode = false;
+
+    // set from the settings GUI, or by SocksProxyHandler when --socks-proxy is given
+    public boolean enableSocksProxy = false;
+
+    @Option(name = "--socks-proxy", handler = SocksProxyHandler.class,
+            usage = "Route the connection to the remote server through a SOCKS5 proxy. Hostname or IP address, optionally with a port (e.g. '127.0.0.1:1080').")
+    public String socksProxyHost = "";
+
+    // no option of its own, --socks-proxy takes the port as part of its argument
+    public int socksProxyPort = 1080;
+
+    @Option(name = "--socks-proxy-username",
+            usage = "Username for a SOCKS5 proxy that requires authentication.")
+    public String socksProxyUsername = "";
+
+    @Option(name = "--socks-proxy-password",
+            usage = "Password for a SOCKS5 proxy that requires authentication. Not saved to the config file.")
+    public transient String socksProxyPassword = "";
 
     // not really important enough to have an option for, can change it in config file
     public boolean smoothZooming = true;

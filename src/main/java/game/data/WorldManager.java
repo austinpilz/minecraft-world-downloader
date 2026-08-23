@@ -2,15 +2,19 @@ package game.data;
 
 import static util.ExceptionHandling.attempt;
 
+import com.google.gson.GsonBuilder;
+import com.google.gson.stream.JsonReader;
 import game.data.chunk.version.Chunk_1_17;
 import game.data.dimension.DimensionType;
 import gui.ChunkImageState;
 import java.io.File;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -76,7 +80,10 @@ public class WorldManager {
     private boolean markNewChunks;
     private boolean writeChunks;
     private boolean isStarted;
-    private boolean isPaused;
+    private volatile boolean isPaused;
+    private volatile boolean pausedForWorldSwitch;
+    private volatile Long knownWorldSeed;
+    private volatile Long pendingWorldSeed;
     private final Set<Dimension> savingDimension;
 
     private ContainerManager containerManager;
@@ -512,8 +519,77 @@ public class WorldManager {
     }
 
     public void resumeSaving() {
+        if (pausedForWorldSwitch && pendingWorldSeed != null) {
+            knownWorldSeed = pendingWorldSeed;
+            writeWorldSeedMarker(pendingWorldSeed);
+            pendingWorldSeed = null;
+        }
         isPaused = false;
+        pausedForWorldSwitch = false;
         System.out.println("Resuming");
+    }
+
+    public boolean isPausedForWorldSwitch() {
+        return pausedForWorldSwitch;
+    }
+
+    /**
+     * Compare the world's hashed seed (read from a Login/Respawn packet) against the seed we last saw for this
+     * output directory. A mismatch means the player has been moved to a different world without the connection
+     * ever dropping (e.g. a hub/network server) - pause saving so the new world's chunks can't get merged into
+     * the old world's data at colliding coordinates, until the user confirms they want to keep saving here.
+     */
+    public void checkWorldSeed(long seed) {
+        if (knownWorldSeed == null) {
+            knownWorldSeed = readWorldSeedMarker();
+        }
+
+        if (knownWorldSeed == null) {
+            knownWorldSeed = seed;
+            writeWorldSeedMarker(seed);
+            return;
+        }
+
+        if (knownWorldSeed == seed || (pausedForWorldSwitch && pendingWorldSeed != null && pendingWorldSeed == seed)) {
+            return;
+        }
+
+        pendingWorldSeed = seed;
+        saveAndUnloadChunks();
+        isPaused = true;
+        pausedForWorldSwitch = true;
+        System.out.println("Auto-paused: a different world was detected");
+        GuiManager.setStatusMessage("");
+    }
+
+    private Path worldSeedMarkerPath() {
+        return PathUtils.toPath(Config.getWorldOutputDir(), "download-session.json");
+    }
+
+    private Long readWorldSeedMarker() {
+        try {
+            File file = worldSeedMarkerPath().toFile();
+            if (!file.exists()) {
+                return null;
+            }
+            WorldSeedMarker marker = new GsonBuilder().create()
+                .fromJson(new JsonReader(new FileReader(file)), WorldSeedMarker.class);
+            return marker == null ? null : marker.seed;
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            return null;
+        }
+    }
+
+    private void writeWorldSeedMarker(long seed) {
+        try {
+            Path path = worldSeedMarkerPath();
+            Files.createDirectories(path.getParent());
+            String contents = new GsonBuilder().create().toJson(new WorldSeedMarker(seed));
+            Files.write(path, Collections.singleton(contents));
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
     }
 
     public void deleteAllExisting() {
@@ -674,7 +750,7 @@ public class WorldManager {
     }
 
     public void blockChange(DataTypeProvider provider) {
-        if (!Config.handleBlockChanges()) {
+        if (!Config.handleBlockChanges() || isPaused) {
             return;
         }
         chunkFactory.runOnFactoryThread(() -> {
@@ -690,7 +766,7 @@ public class WorldManager {
     }
 
     public void multiBlockChange(Coordinate3D pos, DataTypeProvider provider) {
-        if (!Config.handleBlockChanges()) {
+        if (!Config.handleBlockChanges() || isPaused) {
             return;
         }
         chunkFactory.runOnFactoryThread(() -> {
@@ -709,6 +785,9 @@ public class WorldManager {
      * it is given to the chunk to parse immediately.
      */
     public void updateLight(DataTypeProvider provider) {
+        if (isPaused) {
+            return;
+        }
         chunkFactory.runOnFactoryThread(() -> {
             int chunkX = provider.readVarInt();
             int chunkZ = provider.readVarInt();
@@ -761,6 +840,18 @@ public class WorldManager {
 
     public boolean isBelowGround() {
         return isBelowGround;
+    }
+}
+
+/**
+ * Small marker persisted in the world output directory to remember which world (by hashed seed)
+ * was last saved there, so a switch to a different world can be detected on a later Login/Respawn.
+ */
+class WorldSeedMarker {
+    long seed;
+
+    WorldSeedMarker(long seed) {
+        this.seed = seed;
     }
 }
 

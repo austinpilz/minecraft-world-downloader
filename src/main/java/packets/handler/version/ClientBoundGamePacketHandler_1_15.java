@@ -29,7 +29,10 @@ public class ClientBoundGamePacketHandler_1_15 extends ClientBoundGamePacketHand
             WorldManager.getInstance().setDimension(Dimension.fromId(dimensionEnum));
             replacement.writeInt(dimensionEnum);
 
-            replacement.copy(provider, LONG, BYTE, STRING);
+            long hashedSeed = provider.readLong();
+            replacement.writeLong(hashedSeed);
+            WorldManager.getInstance().checkWorldSeed(hashedSeed);
+            replacement.copy(provider, BYTE, STRING);
 
             // view distance
             int viewDist = provider.readVarInt();
@@ -39,6 +42,17 @@ public class ClientBoundGamePacketHandler_1_15 extends ClientBoundGamePacketHand
 
             getConnectionManager().getEncryptionManager().sendImmediately(replacement);
             return false;
+        });
+
+        operators.put("Respawn", provider -> {
+            int dimensionEnum = provider.readInt();
+            WorldManager.getInstance().setDimension(Dimension.fromId(dimensionEnum));
+            WorldManager.getInstance().getEntityRegistry().reset();
+
+            long hashedSeed = provider.readLong();
+            WorldManager.getInstance().checkWorldSeed(hashedSeed);
+
+            return true;
         });
     }
 }

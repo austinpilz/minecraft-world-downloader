@@ -21,7 +21,6 @@ import javafx.scene.SnapshotParameters;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.Button;
-import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.image.*;
 import javafx.scene.input.MouseButton;
@@ -253,8 +252,11 @@ public class GuiMap {
     }
 
     private void setupContextMenu() {
-        ContextMenu menu = new RightClickMenu(this);
-        entityCanvas.setOnContextMenuRequested(e -> menu.show(entityCanvas, e.getScreenX(), e.getScreenY()));
+        RightClickMenu menu = new RightClickMenu(this);
+        entityCanvas.setOnContextMenuRequested(e -> {
+            menu.refreshPauseLabel();
+            menu.show(entityCanvas, e.getScreenX(), e.getScreenY());
+        });
         entityCanvas.setOnMouseClicked(e -> {
 			if (e.getButton() == MouseButton.PRIMARY) {
                 if (menu.isShowing()) {
@@ -436,6 +438,9 @@ public class GuiMap {
         if (this.showErrorPrompt) {
             this.statusLabel.setText("An error has occured. 'Right click' -> 'Settings' to view.");
             this.statusLabel.setStyle("-fx-text-fill: red;");
+        } else if (WorldManager.getInstance().isPausedForWorldSwitch()) {
+            this.statusLabel.setText(statusMessage);
+            this.statusLabel.setStyle("-fx-text-fill: red;");
         } else {
             this.statusLabel.setText(statusMessage);
             this.statusLabel.setStyle("-fx-text-fill: white;");
@@ -455,7 +460,9 @@ public class GuiMap {
     }
 
     public void setStatusMessage(String str) {
-        if (str.equals("") && WorldManager.getInstance().isPaused()) {
+        if (str.equals("") && WorldManager.getInstance().isPausedForWorldSwitch()) {
+            str = "Different world detected - chunk saving paused. Right-click to resume.";
+        } else if (str.equals("") && WorldManager.getInstance().isPaused()) {
             str = "Paused - right-click to resume";
         }
         this.statusMessage = str;

@@ -53,7 +53,10 @@ public class ClientBoundGamePacketHandler_1_20_2 extends ClientBoundGamePacketHa
             replacement.writeString(dimensionType);
             replacement.writeString(dimensionName);
 
-            replacement.copy(provider, LONG, BYTE, BYTE, BOOL, BOOL);
+            long hashedSeed = provider.readLong();
+            replacement.writeLong(hashedSeed);
+            WorldManager.getInstance().checkWorldSeed(hashedSeed);
+            replacement.copy(provider, BYTE, BYTE, BOOL, BOOL);
 
             replacement.copyRemainder(provider);
 

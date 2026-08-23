@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.image.Image;
 import javafx.scene.image.WritableImage;
@@ -38,10 +39,10 @@ public class RegionImage {
         256, new BufferedImage(256, 256, BufferedImage.TYPE_INT_ARGB),
         512, new BufferedImage(512, 512, BufferedImage.TYPE_INT_ARGB)
     );
-    long lastUpdated;
+    volatile long lastUpdated;
 
-    int currentSize = SIZE;
-    int targetSize = SIZE;
+    volatile int currentSize = SIZE;
+    volatile int targetSize = SIZE;
 
     private final Path path;
     final Coordinate2D coordinates;
@@ -50,7 +51,13 @@ public class RegionImage {
     WritableImage chunkOverlay;
     byte[] buffer;
 
-    boolean saved;
+    volatile boolean saved;
+
+    // chunk updates that arrive while the region is displayed below full resolution (e.g. zoomed out).
+    // Buffering them here avoids reloading + decoding the full-size PNG from disk for every single
+    // incoming chunk, which is what caused the preview to stutter on large/fast downloads. They're
+    // merged in by flushPendingChunks() instead, in a batch.
+    private final Map<Coordinate2D, Image> pendingChunks = new ConcurrentHashMap<>();
 
     public RegionImage(Path path, Coordinate2D coords) {
         this(new WritableImage(MIN_SIZE, MIN_SIZE), path, coords);
@@ -160,7 +167,7 @@ public class RegionImage {
         return im;
     }
 
-    public void allowResample() {
+    public synchronized void allowResample() {
         if (targetSize > currentSize) {
             upSample();
         } else if (targetSize < currentSize) {
@@ -168,16 +175,22 @@ public class RegionImage {
         }
     }
 
-    private void upSample() {
+    private synchronized void upSample() {
         try {
             image = loadFromFile(getFile(path, NORMAL_PREFIX, coordinates), targetSize);
             currentSize = targetSize;
+
+            // the disk copy we just loaded may be missing chunks that arrived while we were
+            // displayed below full resolution - merge those back in now that we have the buffer for it
+            if (currentSize == SIZE) {
+                applyPendingChunks();
+            }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
 
-    private void downSample() {
+    private synchronized void downSample() {
         if (targetSize == currentSize) {
             return;
         }
@@ -200,17 +213,48 @@ public class RegionImage {
         return image;
     }
 
-    public void drawChunk(Coordinate2D local, Image chunkImage) {
+    public synchronized void drawChunk(Coordinate2D local, Image chunkImage) {
         this.lastUpdated = System.currentTimeMillis();
         this.saved = false;
 
-        if (targetSize < SIZE || currentSize < SIZE) {
-            targetSize = SIZE;
+        // if we're already showing the region at full resolution, write straight into it. Otherwise,
+        // avoid forcing a synchronous disk reload for every single chunk update - buffer it and let
+        // flushPendingChunks() apply it later, in a batch with any other chunks that arrive meanwhile.
+        if (currentSize == SIZE) {
+            drawChunkToImage(local, chunkImage);
+        } else {
+            pendingChunks.put(local, chunkImage);
+        }
+    }
 
-            upSample();
+    /**
+     * Merge any buffered chunk updates into the full-resolution image, loading it from disk first if
+     * we're not currently holding it at full resolution.
+     */
+    public synchronized void flushPendingChunks() {
+        if (pendingChunks.isEmpty()) {
+            return;
         }
 
-        drawChunkToImage(local, chunkImage);
+        if (currentSize != SIZE) {
+            try {
+                image = loadFromFile(getFile(path, NORMAL_PREFIX, coordinates), SIZE);
+                currentSize = SIZE;
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        applyPendingChunks();
+    }
+
+    private void applyPendingChunks() {
+        if (pendingChunks.isEmpty()) {
+            return;
+        }
+
+        pendingChunks.forEach(this::drawChunkToImage);
+        pendingChunks.clear();
     }
 
     private void drawChunkToImage(Coordinate2D local, Image chunkImage) {
@@ -229,10 +273,14 @@ public class RegionImage {
         }
     }
 
-    public void save() throws IOException {
+    public synchronized void save() throws IOException {
         if (saved) {
             return;
         }
+
+        // make sure any buffered chunk updates are merged into the full-resolution image before we
+        // write it out, otherwise we could persist a downsized preview under the full-resolution filename
+        flushPendingChunks();
 
         File f = getFile(path, NORMAL_PREFIX, coordinates);
         BufferedImage img = SwingFXUtils.fromFXImage(image, null);

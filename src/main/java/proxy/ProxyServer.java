@@ -45,6 +45,11 @@ public class ProxyServer extends Thread {
         String friendlyHost = connectionDetails.getFriendlyHost();
         System.out.println("Starting proxy for " + friendlyHost + ". Make sure to connect to localhost:" + connectionDetails.getPortLocal() + " instead of the regular server address.");
 
+        SocksProxyDetails socksProxy = connectionDetails.getSocksProxy();
+        String connectionFailureHint = socksProxy == null
+            ? "The server may be down or on a different address."
+            : "The server may be down, or the SOCKS proxy at " + socksProxy.getFriendlyHost() + " may be unreachable or rejecting the connection.";
+
         // Create a ServerSocket to listen for connections with
         AtomicReference<ServerSocket> ss = new AtomicReference<>();
         attempt(() -> ss.set(connectionDetails.getServerSocket()), (ex) -> {
@@ -69,9 +74,15 @@ public class ProxyServer extends Thread {
 
                 // If the server cannot connect, close client connection
                 attempt(() -> server.set(connectionDetails.getClientSocket()), (ex) -> {
-                    System.err.println("Cannot connect to " + friendlyHost + ". The server may be down or on a different address. (" + ex.getClass().getCanonicalName() + ")");
+                    System.err.println("Cannot connect to " + friendlyHost + ". " + connectionFailureHint + " (" + ex.getClass().getCanonicalName() + ")");
                     attempt(client.get()::close);
                 });
+
+                // the connection above failed and the client has been closed, so wait for a new connection
+                // instead of carrying on with a server socket that was never set
+                if (server.get() == null) {
+                    return;
+                }
 
                 final InputStream streamFromServer = server.get().getInputStream();
                 final OutputStream streamToServer = server.get().getOutputStream();

@@ -59,10 +59,17 @@ public class ChunkSection_1_18 extends ChunkSection_1_16 {
         if (blockCount < 0) { blockCount = palette.isEmpty() ? 0 : 4096; }
 
         packet.writeShort(blockCount);
+
+        // 26.1+ (protocol 775+) added a fluid count field right after block count. We don't track
+        // this separately, so write 0 - it's only used by the client as a rendering/tick optimization hint.
+        if (Config.versionReporter().isAtLeast(Version.V26_1_2)) {
+            packet.writeShort(0);
+        }
+
         palette.write(packet);
 
-        if (Config.versionReporter().isAtLeast(Version.V1_21_11)) {
-            // 1.21.11+ PalettedContainer.write uses fixed-size long arrays.
+        if (Config.versionReporter().isAtLeast(Version.V1_21_5)) {
+            // 1.21.5+ PalettedContainer.write uses fixed-size long arrays.
             writeFixedLongArray(packet, blocks, ChunkSection_1_16.longsRequired(palette.getBitsPerBlock()));
         } else {
             packet.writeVarInt(blocks.length);
@@ -71,8 +78,8 @@ public class ChunkSection_1_18 extends ChunkSection_1_16 {
 
         biomePalette.write(packet);
 
-        if (Config.versionReporter().isAtLeast(Version.V1_21_11)) {
-            // 1.21.11+ PalettedContainer.write uses fixed-size long arrays.
+        if (Config.versionReporter().isAtLeast(Version.V1_21_5)) {
+            // 1.21.5+ PalettedContainer.write uses fixed-size long arrays.
             writeFixedLongArray(packet, biomes, ChunkSection_1_16.longsRequiredBiomes(biomePalette.getBitsPerBlock()));
         } else {
             packet.writeVarInt(biomes.length);

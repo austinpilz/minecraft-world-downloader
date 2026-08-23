@@ -6,6 +6,7 @@ import org.xbill.DNS.SRVRecord;
 import org.xbill.DNS.Type;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 
@@ -14,11 +15,21 @@ import static util.ExceptionHandling.attempt;
 public class ConnectionDetails {
     private final int DEFAULT_PORT = 25565;
 
+    // only used when going through a proxy, a dead proxy would otherwise hang on the OS default
+    private static final int PROXY_CONNECT_TIMEOUT_MS = 15_000;
+
     private String host;
     private int portRemote;
     private int portLocal;
 
+    private final SocksProxyDetails socksProxy;
+
     public ConnectionDetails(String host, int portLocal, boolean performSrvLookup) {
+        this(host, portLocal, performSrvLookup, null);
+    }
+
+    public ConnectionDetails(String host, int portLocal, boolean performSrvLookup, SocksProxyDetails socksProxy) {
+        this.socksProxy = socksProxy;
         this.portRemote = DEFAULT_PORT;
 
         if (host.contains(":")) {
@@ -57,7 +68,20 @@ public class ConnectionDetails {
     }
 
     public Socket getClientSocket() throws IOException {
-        return new Socket(host, portRemote);
+        if (socksProxy == null) {
+            return new Socket(host, portRemote);
+        }
+
+        Socket socket = new Socket(socksProxy.toProxy());
+
+        // the address is left unresolved on purpose: that makes the SOCKS proxy perform the DNS lookup for
+        // us, so the address of the server we're connecting to isn't resolved locally.
+        socket.connect(InetSocketAddress.createUnresolved(host, portRemote), PROXY_CONNECT_TIMEOUT_MS);
+        return socket;
+    }
+
+    public SocksProxyDetails getSocksProxy() {
+        return socksProxy;
     }
 
     public String getConnectionHint() {

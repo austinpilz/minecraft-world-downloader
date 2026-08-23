@@ -195,6 +195,9 @@
         <Tab fx:id="authTab" text="Authentication">
             <fx:include fx:id="auth" source="AuthTab.fxml" />
         </Tab>
+        <Tab fx:id="proxyTab" text="Proxy">
+            <fx:include fx:id="proxy" source="ProxyTab.fxml" />
+        </Tab>
         <Tab fx:id="realmsTab" text="Realms">
             <fx:include fx:id="realms" source="RealmsTab.fxml" />
         </Tab>

@@ -28,6 +28,8 @@ public class RightClickMenu extends ContextMenu {
     final static String PROMPT_PAUSE = "Pause chunk saving";
     final static String PROMPT_RESUME = "Resume chunk saving";
 
+    private final MenuItem pauseMenuItem;
+
     final List<MenuItem> renderModes = List.of(
         construct("Automatic", e -> setRenderMode(null, e)),
         construct("Surface", e -> setRenderMode(ImageMode.NORMAL, e)),
@@ -45,7 +47,7 @@ public class RightClickMenu extends ContextMenu {
     public RightClickMenu(GuiMap handler) {
         List<MenuItem> menu = this.getItems();
 
-        menu.add(construct(PROMPT_PAUSE, event -> {
+        pauseMenuItem = construct(PROMPT_PAUSE, event -> {
             MenuItem item =  ((MenuItem) event.getTarget());
             if (WorldManager.getInstance().isPaused()) {
                 WorldManager.getInstance().resumeSaving();
@@ -55,7 +57,8 @@ public class RightClickMenu extends ContextMenu {
                 item.setText(PROMPT_RESUME);
             }
             handler.setStatusMessage("");
-        }));
+        });
+        menu.add(pauseMenuItem);
 
         menu.add(construct("Delete all downloaded chunks", e -> {
             Alert alert = new Alert(Alert.AlertType.NONE,
@@ -110,6 +113,14 @@ public class RightClickMenu extends ContextMenu {
         if (Config.isInDevMode()) {
             addDevOptions(menu, handler);
         }
+    }
+
+    /**
+     * The pause item's label only updates itself when clicked, so it can go stale when saving is
+     * paused/resumed from elsewhere (e.g. an auto-pause on world switch). Call before showing the menu.
+     */
+    public void refreshPauseLabel() {
+        pauseMenuItem.setText(WorldManager.getInstance().isPaused() ? PROMPT_RESUME : PROMPT_PAUSE);
     }
 
     private void addDevOptions(List<MenuItem> menu, GuiMap handler) {

@@ -82,9 +82,13 @@ public class ClientBoundGamePacketHandler_1_20_6 extends ClientBoundGamePacketHa
         world.setDimension(world.getDimensionRegistry().getDimension(dimensionName));
         world.setDimensionType(world.getDimensionRegistry().getDimensionType(dimensionType));
 
+        long hashedSeed = provider.readLong();
+        world.checkWorldSeed(hashedSeed);
+
         if (replacement != null) {
             replacement.writeVarInt(dimensionType);
             replacement.writeString(dimensionName);
+            replacement.writeLong(hashedSeed);
             replacement.copyRemainder(provider);
         }
     }

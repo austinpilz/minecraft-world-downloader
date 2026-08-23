@@ -54,7 +54,10 @@ public class ClientBoundGamePacketHandler_1_19 extends ClientBoundGamePacketHand
             replacement.writeString(dimensionType);
             replacement.writeString(worldName);
 
-            replacement.copy(provider, LONG, VARINT);
+            long hashedSeed = provider.readLong();
+            replacement.writeLong(hashedSeed);
+            WorldManager.getInstance().checkWorldSeed(hashedSeed);
+            replacement.copy(provider, VARINT);
 
             // extend view distance communicated to the client to the given value
             int viewDist = provider.readVarInt();
@@ -82,6 +85,9 @@ public class ClientBoundGamePacketHandler_1_19 extends ClientBoundGamePacketHand
 
             WorldManager.getInstance().setDimension(dimension);
             WorldManager.getInstance().getEntityRegistry().reset();
+
+            long hashedSeed = provider.readLong();
+            WorldManager.getInstance().checkWorldSeed(hashedSeed);
 
             return true;
         });

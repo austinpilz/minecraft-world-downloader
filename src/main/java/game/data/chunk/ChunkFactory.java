@@ -63,6 +63,10 @@ public class ChunkFactory {
      * @param entityData the NBT data of the entity
      */
     public void updateTileEntity(Coordinate3D position, SpecificTag entityData) {
+        if (WorldManager.getInstance().isPaused()) {
+            return;
+        }
+
         CoordinateDim2D chunkPos = position.globalToChunk().addDimension(WorldManager.getInstance().getDimension());
 
         Chunk chunk = WorldManager.getInstance().getChunk(chunkPos);

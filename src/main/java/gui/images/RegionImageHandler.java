@@ -20,7 +20,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -35,32 +35,67 @@ import org.apache.commons.io.FileUtils;
  */
 public class RegionImageHandler {
     private static final String CACHE_PATH = "image-cache";
+    // side length of a region in blocks (32 chunks * 16 blocks) - kept in sync with Bounds.overlaps()
+    private static final int REGION_BLOCK_SIZE = 512;
+
     private Map<Coordinate2D, RegionImages> regions;
     private Dimension activeDimension;
     private boolean isSaving = false;
 
-    private final ScheduledExecutorService imageHandlerExecutor;
+    // draws are cheap, in-memory pixel writes and need to keep up with incoming chunks, so they get
+    // their own executor. Saving/resampling involves disk I/O and PNG encode/decode and can take a
+    // while on large worlds - if it shared a thread with draws, a slow save would back up every
+    // pending chunk draw behind it and the whole preview would visibly stutter/lag.
+    private final ExecutorService drawExecutor;
+    private final ScheduledExecutorService ioExecutor;
     private static ImageMode overrideMode;
     private ImageMode imageMode = ImageMode.NORMAL;
 
-    ConcurrentLinkedQueue<RegionImages> resizeLater;
-
+    // bounds/scale from the most recent drawAll() call, used by the periodic off-screen shrink sweep
+    private volatile Bounds lastBounds;
+    private volatile double lastBlocksPerPixel = 1;
 
     public RegionImageHandler() {
         this.regions = new ConcurrentHashMap<>();
-        this.resizeLater = new ConcurrentLinkedQueue<>();
 
-        imageHandlerExecutor = Executors.newSingleThreadScheduledExecutor(
-            (r) -> new Thread(r, "Region Image Handler")
+        drawExecutor = Executors.newSingleThreadExecutor(
+            (r) -> new Thread(r, "Region Draw Handler")
         );
-        imageHandlerExecutor.scheduleWithFixedDelay(this::save, 20, 20, TimeUnit.SECONDS);
-        imageHandlerExecutor.scheduleWithFixedDelay(this::resizeLater, 15, 5, TimeUnit.SECONDS);
+        ioExecutor = Executors.newSingleThreadScheduledExecutor(
+            (r) -> new Thread(r, "Region IO Handler")
+        );
+        ioExecutor.scheduleWithFixedDelay(this::save, 20, 20, TimeUnit.SECONDS);
+        ioExecutor.scheduleWithFixedDelay(this::flushPendingRegions, 2, 2, TimeUnit.SECONDS);
+        ioExecutor.scheduleWithFixedDelay(this::shrinkOffscreenRegions, 5, 5, TimeUnit.SECONDS);
     }
 
-    private void resizeLater() {
-        while (!resizeLater.isEmpty()) {
-            resizeLater.remove().allowResample();
+    /**
+     * Merge any chunk updates that were buffered (rather than written straight to disk) because their
+     * region was displayed below full resolution at the time.
+     */
+    private void flushPendingRegions() {
+        regions.values().forEach(RegionImages::flushPendingChunks);
+    }
+
+    /**
+     * Regularly shrink regions that have fallen outside the current view back down, since drawAll()
+     * only visits regions that are currently visible.
+     */
+    private void shrinkOffscreenRegions() {
+        Bounds bounds = this.lastBounds;
+        if (bounds == null) {
+            return;
         }
+
+        regions.forEach((coordinate, images) -> {
+            if (bounds.overlaps(coordinate)) {
+                return;
+            }
+
+            if (images.updateSize(false, imageMode, lastBlocksPerPixel)) {
+                images.allowResample();
+            }
+        });
     }
 
     public static ImageMode getOverrideMode() {
@@ -88,12 +123,7 @@ public class RegionImageHandler {
 
         Coordinate2D local = coordinate.toRegionLocal();
 
-        imageHandlerExecutor.schedule(() -> {
-            imageMap.forEach((mode, image) -> {
-                images.getImage(mode).drawChunk(local, image);
-            });
-        }, 0, TimeUnit.MILLISECONDS);
-
+        drawExecutor.execute(() -> imageMap.forEach((mode, image) -> images.getImage(mode).drawChunk(local, image)));
 
         setChunkState(images, local, ChunkImageState.isSaved(isSaved));
     }
@@ -121,8 +151,8 @@ public class RegionImageHandler {
     private void save(Map<Coordinate2D, RegionImages> regions, Dimension dim) {
         // if shutdown is called, wait for saving to complete
         if (isSaving) {
-            if (imageHandlerExecutor != null) {
-                attempt(() -> imageHandlerExecutor.awaitTermination(10, TimeUnit.SECONDS));
+            if (ioExecutor != null) {
+                attempt(() -> ioExecutor.awaitTermination(10, TimeUnit.SECONDS));
             }
             return;
         }
@@ -210,27 +240,49 @@ public class RegionImageHandler {
         }
     }
 
+    /**
+     * Draws only the regions currently overlapping the view. Previously this walked every region ever
+     * loaded this session on every single animation frame (60/sec) just to test visibility - on a large
+     * world with thousands of regions loaded, that fixed per-frame cost alone was enough to make the
+     * preview stutter, on top of everything else. Instead, compute the (small) rectangle of region
+     * coordinates the view can possibly overlap and look those up directly.
+     */
     public void drawAll(Bounds bounds, double blocksPerPixel, BiConsumer<Coordinate2D, Image> drawRegion) {
         updateRenderMode();
 
-        regions.forEach((coordinate, images) -> {
-            boolean isVisible = bounds.overlaps(coordinate);
+        this.lastBounds = bounds;
+        this.lastBlocksPerPixel = blocksPerPixel;
 
-            boolean shouldResize = images.updateSize(isVisible, imageMode, blocksPerPixel);
-            if (isVisible && shouldResize) {
-                imageHandlerExecutor.schedule(images::allowResample, 0, TimeUnit.MILLISECONDS);
-            } else if (shouldResize) {
-                resizeLater.add(images);
-            }
+        int minRegionX = (int) Math.floor(bounds.getMinX() / REGION_BLOCK_SIZE) - 1;
+        int maxRegionX = (int) Math.floor(bounds.getMaxX() / REGION_BLOCK_SIZE) + 1;
+        int minRegionZ = (int) Math.floor(bounds.getMinZ() / REGION_BLOCK_SIZE) - 1;
+        int maxRegionZ = (int) Math.floor(bounds.getMaxZ() / REGION_BLOCK_SIZE) + 1;
 
-            if (isVisible) {
+        for (int x = minRegionX; x <= maxRegionX; x++) {
+            for (int z = minRegionZ; z <= maxRegionZ; z++) {
+                Coordinate2D coordinate = new Coordinate2D(x, z);
+                if (!bounds.overlaps(coordinate)) {
+                    continue;
+                }
+
+                RegionImages images = regions.get(coordinate);
+                if (images == null) {
+                    continue;
+                }
+
+                if (images.updateSize(true, imageMode, blocksPerPixel)) {
+                    ioExecutor.execute(images::allowResample);
+                }
+
                 RegionImage image = images.getImage(imageMode);
-                if (image == null) { return; }
+                if (image == null) {
+                    continue;
+                }
 
                 drawRegion.accept(coordinate, image.getImage());
                 drawRegion.accept(coordinate, image.getChunkOverlay());
             }
-        });
+        }
     }
 
     public String stats() {
@@ -253,8 +305,11 @@ public class RegionImageHandler {
     }
 
     public void shutdown() {
-        if (imageHandlerExecutor != null) {
-            imageHandlerExecutor.shutdown();
+        if (drawExecutor != null) {
+            drawExecutor.shutdown();
+        }
+        if (ioExecutor != null) {
+            ioExecutor.shutdown();
         }
     }
 
@@ -301,6 +356,13 @@ class RegionImages {
     public void save() throws IOException {
         normal.save();
         caves.save();
+    }
+
+    public void flushPendingChunks() {
+        normal.flushPendingChunks();
+        if (caves != null) {
+            caves.flushPendingChunks();
+        }
     }
 
     public boolean updateSize(boolean isVisible, ImageMode mode, double blocksPerPixel) {

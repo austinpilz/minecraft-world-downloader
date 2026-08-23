@@ -102,12 +102,12 @@ public class Chunk_1_18 extends Chunk_1_17 {
 
     @Override
     protected void parseHeightMaps(DataTypeProvider dataProvider) {
-        if (!Config.versionReporter().isAtLeast(Version.V1_21_11)) {
+        if (!Config.versionReporter().isAtLeast(Version.V1_21_5)) {
             super.parseHeightMaps(dataProvider);
             return;
         }
 
-        // 1.21.11+ sends heightmaps as a raw count-prefixed list of (type, longCount, longs)
+        // 1.21.5+ sends heightmaps as a raw count-prefixed list of (type, longCount, longs)
         // instead of an NBT compound tag.
         CompoundTag map = new CompoundTag();
 
@@ -125,7 +125,7 @@ public class Chunk_1_18 extends Chunk_1_17 {
 
     @Override
     protected void writeHeightMaps(PacketBuilder packet) {
-        if (!Config.versionReporter().isAtLeast(Version.V1_21_11)) {
+        if (!Config.versionReporter().isAtLeast(Version.V1_21_5)) {
             super.writeHeightMaps(packet);
             return;
         }
@@ -180,9 +180,9 @@ public class Chunk_1_18 extends Chunk_1_17 {
         };
     }
 
-    private long[] readPalettedContainerData(DataTypeProvider dataProvider, Palette palette, PaletteType type) {
-        if (Config.versionReporter().isAtLeast(Version.V1_21_11)) {
-            // 1.21.11+ PalettedContainer.write uses fixed-size long arrays.
+    protected long[] readPalettedContainerData(DataTypeProvider dataProvider, Palette palette, PaletteType type) {
+        if (Config.versionReporter().isAtLeast(Version.V1_21_5)) {
+            // 1.21.5+ PalettedContainer.write uses fixed-size long arrays.
             int longsExpected = type == PaletteType.BIOMES
                 ? ChunkSection_1_18.longsRequiredBiomes(palette.getBitsPerBlock())
                 : ChunkSection_1_18.longsRequired(palette.getBitsPerBlock());
@@ -201,6 +201,12 @@ public class Chunk_1_18 extends Chunk_1_17 {
             ChunkSection_1_18 section = (ChunkSection_1_18) getChunkSection(sectionY);
 
             int blockCount = dataProvider.readShort();
+
+            // 26.1+ (protocol 775+) added a fluid count field right after block count.
+            if (Config.versionReporter().isAtLeast(Version.V26_1_2)) {
+                dataProvider.readShort();
+            }
+
             Palette blockPalette = Palette.readPalette(dataProvider, PaletteType.BLOCKS);
 
             if (section == null) {
