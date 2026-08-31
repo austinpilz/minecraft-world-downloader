@@ -1,4 +1,7 @@
 # Minecraft World Downloader
+
+![Downloading Gif](docs/downloading.gif)
+
 A fork of [mircokroon/minecraft-world-downloader](https://github.com/mircokroon/minecraft-world-downloader) - 
 A Minecraft world downloader that works as a proxy server between the client and the server to read & save chunk 
 data as you explore it. Download multiplayer worlds by connecting to them and walking around. Perfect for
@@ -57,4 +60,19 @@ typically from servers running [ViaBackwards](https://github.com/ViaVersion/ViaB
 | 1.13.2               |      341 |         1444 |
 | 1.12.2               |      317 |         1132 |
 
+## Menus
+Target server the proxy should connect to and download chunks from:
+![](docs/connection.png)
 
+For servers that support it, asking for extended render distance chunks increases the amount of chunks around you being 
+requested and downloaded on your behalf, regardless of your client settings.
+![](docs/general.png)
+
+Output:
+![](docs/world.png)
+
+The proxy connects directly to the remote Minecraft server and must have your Minecraft account access:
+![](docs/authentication.png)
+
+Optionally, the proxy can connect to the remote Minecraft server through a SOCKS5 proxy.
+![](docs/proxy.png)
