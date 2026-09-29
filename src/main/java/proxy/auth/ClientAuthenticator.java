@@ -7,12 +7,18 @@ import kong.unirest.JsonNode;
 import kong.unirest.Unirest;
 import kong.unirest.UnirestException;
 
+import config.Config;
 import javax.security.sasl.AuthenticationException;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import kong.unirest.json.JSONObject;
 import proxy.EncryptionManager;
+import proxy.SocksProxyDetails;
 
 import static util.PrintUtils.devPrint;
 
@@ -53,16 +59,46 @@ public class ClientAuthenticator extends AuthDetailsManager {
 
         GuiManager.setStatusMessage("Authenticating with Mojang servers...");
 
-        HttpResponse<String> str = Unirest.post(AUTH_URL)
-                .header("Content-Type", "application/json")
-                .body(new Gson().toJson(body))
-                .asString();
+        String json = new Gson().toJson(body);
+        SocksProxyDetails socksProxy = Config.getSocksProxy();
+
+        int status;
+        String statusText;
+        try {
+            if (socksProxy == null) {
+                HttpResponse<String> str = Unirest.post(AUTH_URL)
+                        .header("Content-Type", "application/json")
+                        .body(json)
+                        .asString();
+                status = str.getStatus();
+                statusText = str.getStatusText();
+            } else {
+                // The session server records the IP that made the join, and the remote server passes the IP it sees
+                // to hasJoined. When the game connection goes through SOCKS, the join has to come from the same IP.
+                HttpURLConnection conn = (HttpURLConnection) new URL(AUTH_URL).openConnection(socksProxy.toProxy());
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(15000);
+                conn.setDoOutput(true);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(json.getBytes(StandardCharsets.UTF_8));
+                }
+                status = conn.getResponseCode();
+                statusText = conn.getResponseMessage();
+                conn.disconnect();
+            }
+        } catch (IOException e) {
+            GuiManager.setStatusMessage("");
+            GuiManager.setAuthenticationFailed();
+            throw new RuntimeException("Could not reach Mojang session server: " + e.getMessage(), e);
+        }
 
         GuiManager.setStatusMessage("");
 
-        if (!str.isSuccess()) {
+        if (status < 200 || status >= 300) {
             GuiManager.setAuthenticationFailed();
-            throw new RuntimeException("Client not authenticated! " + str.getStatus() + ": " + str.getStatusText());
+            throw new RuntimeException("Client not authenticated! " + status + ": " + statusText);
         } else {
             devPrint("Successfully authenticated user with Mojang session server.");
         }

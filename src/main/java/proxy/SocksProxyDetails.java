@@ -7,8 +7,8 @@ import java.net.Proxy;
 
 /**
  * Details of the SOCKS5 proxy that the connection to the remote server is routed through, if the user
- * configured one. Only the outbound game connection uses this - the Mojang/Microsoft HTTP calls are
- * unaffected and still go out directly.
+ * configured one. The outbound game connection uses this, as does the Mojang session join (so both come from
+ * the same IP). Other Mojang/Microsoft HTTP calls are unaffected and still go out directly.
  */
 public class SocksProxyDetails {
     private static final int DEFAULT_PORT = 1080;
