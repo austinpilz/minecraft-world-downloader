@@ -71,7 +71,7 @@ public class ClientBoundGamePacketHandler extends PacketHandler {
         
         //renamed in 1.21.2
         operations.put("EntityPositionSync",provider ->{
-            entityRegistry.updatePositionRelative(provider);
+            entityRegistry.updatePositionSync(provider);
             return true;
         });
 

@@ -35,6 +35,7 @@ typically from servers running [ViaBackwards](https://github.com/ViaVersion/ViaB
 
 | Minecraft version    | Protocol | Data version |
 |----------------------|---------:|-------------:|
+| 26.3                 |      777 |         5023 |
 | 26.2                 |      776 |         4903 |
 | 26.1, 26.1.1, 26.1.2 |      775 |         4790 |
 | 1.21.11              |      774 |         4671 |
