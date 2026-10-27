@@ -80,6 +80,8 @@ Optionally, the proxy can connect to the remote Minecraft server through a SOCKS
 ![](docs/proxy.png)
 
 ## Map overlays
+![](docs/overlays.png)
+
 Many servers publish a web map with region outlines, world borders, rail lines and points of interest. You can import
 those shapes into the downloader's map, so you can see which chunks still need to be visited to cover a town or a
 claim. The shapes are drawn on top of the chunk map, the shape under the cursor is highlighted and its name is shown
