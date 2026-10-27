@@ -1,0 +1,263 @@
+{
+  "BlueBridgeWG-6293daf2-7bc1-4e84-abb8-83d5ecfe32f4": {
+    "label": "WorldGuard Regions",
+    "toggleable": true,
+    "defaultHidden": false,
+    "sorting": 0,
+    "markers": {
+      "!BlueBridge_RegionMarker#BlueBridgeWG_6293daf2-7bc1-4e84-abb8-83d5ecfe32f4:hirdarth": {
+        "shape": [
+          {
+            "x": 6640,
+            "z": 7690
+          },
+          {
+            "x": 6841,
+            "z": 7690
+          },
+          {
+            "x": 6841,
+            "z": 7891
+          },
+          {
+            "x": 6640,
+            "z": 7891
+          }
+        ],
+        "holes": [],
+        "shapeY": 63.0,
+        "depthTest": false,
+        "lineWidth": 2,
+        "lineColor": {
+          "r": 0,
+          "g": 96,
+          "b": 255,
+          "a": 1.0
+        },
+        "fillColor": {
+          "r": 0,
+          "g": 135,
+          "b": 255,
+          "a": 0.5882353186607361
+        },
+        "detail": "<h2 style=\"color:#0060ff;text-align:center;margin-block-end:0.3em\">\n  <span style=\"text-transform: capitalize;\">hirdarth</span>\n</h2>\n<p style=\"text-align:center\">\n  Area: 40401\n  <br />\n  Volume: 10342656\n</p>\n<div style=\"display:flex\">\n  <div style=\"flex:50%;padding:10px\">\n    <h3 style=\"margin-block-start:0.3em;margin-block-end:0.3em\">\n      Owners\n    </h3>\n    <p>\n      <span>\n        null<br>18kennedym\n      </span>\n    </p>\n  </div>\n  <div style=\"flex:50%;padding:10px\">\n    <h3 style=\"margin-block-start:0.3em;margin-block-end:0.3em\">\n      Members\n    </h3>\n    <p>\n      <span>\n        null<br>null<br>null<br>Pbloc<br>null<br>null<br>null<br>null<br>HumbleDuker<br>null\n      </span>\n    </p>\n  </div>\n</div>",
+        "newTab": false,
+        "minDistance": 0.0,
+        "maxDistance": 10000000.0,
+        "type": "shape",
+        "label": "hirdarth",
+        "position": {
+          "x": 6740.5,
+          "y": 63,
+          "z": 7790.5
+        },
+        "sorting": 0,
+        "listed": true
+      },
+      "!BlueBridge_RegionMarker#BlueBridgeWG_6293daf2-7bc1-4e84-abb8-83d5ecfe32f4:pine_square": {
+        "shape": [
+          {
+            "x": -5050,
+            "z": 3070
+          },
+          {
+            "x": -4848,
+            "z": 3070
+          },
+          {
+            "x": -4848,
+            "z": 3271
+          },
+          {
+            "x": -5050,
+            "z": 3271
+          }
+        ],
+        "holes": [],
+        "shapeY": 63.0,
+        "depthTest": false,
+        "lineWidth": 2,
+        "lineColor": {
+          "r": 0,
+          "g": 96,
+          "b": 255,
+          "a": 1.0
+        },
+        "fillColor": {
+          "r": 0,
+          "g": 135,
+          "b": 255,
+          "a": 0.5882353186607361
+        },
+        "detail": "<h2 style=\"color:#0060ff;text-align:center;margin-block-end:0.3em\">\n  <span style=\"text-transform: capitalize;\">pine_square</span>\n</h2>\n<p style=\"text-align:center\">\n  Area: 40602\n  <br />\n  Volume: 10394112\n</p>\n<div style=\"display:flex\">\n  <div style=\"flex:50%;padding:10px\">\n    <h3 style=\"margin-block-start:0.3em;margin-block-end:0.3em\">\n      Owners\n    </h3>\n    <p>\n      <span>\n        TimNerd2\n      </span>\n    </p>\n  </div>\n  <div style=\"flex:50%;padding:10px\">\n    <h3 style=\"margin-block-start:0.3em;margin-block-end:0.3em\">\n      Members\n    </h3>\n    <p>\n      <span>\n        null<br>null\n      </span>\n    </p>\n  </div>\n</div>",
+        "newTab": false,
+        "minDistance": 0.0,
+        "maxDistance": 10000000.0,
+        "type": "shape",
+        "label": "pine_square",
+        "position": {
+          "x": -4949,
+          "y": 63,
+          "z": 3170.5
+        },
+        "sorting": 0,
+        "listed": true
+      },
+      "!BlueBridge_RegionMarker#BlueBridgeWG_6293daf2-7bc1-4e84-abb8-83d5ecfe32f4:rome": {
+        "shape": [
+          {
+            "x": 7017,
+            "z": 7734
+          },
+          {
+            "x": 7218,
+            "z": 7734
+          },
+          {
+            "x": 7218,
+            "z": 7939
+          },
+          {
+            "x": 7017,
+            "z": 7939
+          }
+        ],
+        "holes": [],
+        "shapeY": 63.0,
+        "depthTest": false,
+        "lineWidth": 2,
+        "lineColor": {
+          "r": 0,
+          "g": 96,
+          "b": 255,
+          "a": 1.0
+        },
+        "fillColor": {
+          "r": 0,
+          "g": 135,
+          "b": 255,
+          "a": 0.5882353186607361
+        },
+        "detail": "<h2 style=\"color:#0060ff;text-align:center;margin-block-end:0.3em\">\n  <span style=\"text-transform: capitalize;\">rome</span>\n</h2>\n<p style=\"text-align:center\">\n  Area: 41205\n  <br />\n  Volume: 10548480\n</p>\n<div style=\"display:flex\">\n  <div style=\"flex:50%;padding:10px\">\n    <h3 style=\"margin-block-start:0.3em;margin-block-end:0.3em\">\n      Owners\n    </h3>\n    <p>\n      <span>\n        null\n      </span>\n    </p>\n  </div>\n  <div style=\"flex:50%;padding:10px\">\n    <h3 style=\"margin-block-start:0.3em;margin-block-end:0.3em\">\n      Members\n    </h3>\n    <p>\n      <span>\n        drainxr\n      </span>\n    </p>\n  </div>\n</div>",
+        "newTab": false,
+        "minDistance": 0.0,
+        "maxDistance": 10000000.0,
+        "type": "shape",
+        "label": "rome",
+        "position": {
+          "x": 7117.5,
+          "y": 63,
+          "z": 7836.5
+        },
+        "sorting": 0,
+        "listed": true
+      },
+      "!BlueBridge_RegionMarker#BlueBridgeWG_6293daf2-7bc1-4e84-abb8-83d5ecfe32f4:downtownhirdarth": {
+        "shape": [
+          {
+            "x": 6841,
+            "z": 7531
+          },
+          {
+            "x": 7042,
+            "z": 7531
+          },
+          {
+            "x": 7042,
+            "z": 7732
+          },
+          {
+            "x": 6841,
+            "z": 7732
+          }
+        ],
+        "holes": [],
+        "shapeY": 63.0,
+        "depthTest": false,
+        "lineWidth": 2,
+        "lineColor": {
+          "r": 0,
+          "g": 96,
+          "b": 255,
+          "a": 1.0
+        },
+        "fillColor": {
+          "r": 0,
+          "g": 135,
+          "b": 255,
+          "a": 0.5882353186607361
+        },
+        "detail": "<h2 style=\"color:#0060ff;text-align:center;margin-block-end:0.3em\">\n  <span style=\"text-transform: capitalize;\">downtownhirdarth</span>\n</h2>\n<p style=\"text-align:center\">\n  Area: 40401\n  <br />\n  Volume: 10342656\n</p>\n<div style=\"display:flex\">\n  <div style=\"flex:50%;padding:10px\">\n    <h3 style=\"margin-block-start:0.3em;margin-block-end:0.3em\">\n      Owners\n    </h3>\n    <p>\n      <span>\n        null<br>18kennedym\n      </span>\n    </p>\n  </div>\n  <div style=\"flex:50%;padding:10px\">\n    <h3 style=\"margin-block-start:0.3em;margin-block-end:0.3em\">\n      Members\n    </h3>\n    <p>\n      <span>\n        HumbleDuker<br>null\n      </span>\n    </p>\n  </div>\n</div>",
+        "newTab": false,
+        "minDistance": 0.0,
+        "maxDistance": 10000000.0,
+        "type": "shape",
+        "label": "downtownhirdarth",
+        "position": {
+          "x": 6941.5,
+          "y": 63,
+          "z": 7631.5
+        },
+        "sorting": 0,
+        "listed": true
+      }
+    }
+  },
+  "BlueBridgeWB-6293daf2-7bc1-4e84-abb8-83d5ecfe32f4": {
+    "label": "World borders",
+    "toggleable": true,
+    "defaultHidden": false,
+    "sorting": 0,
+    "markers": {
+      "!BlueBridge_RegionMarker#BlueBridgeWB_6293daf2-7bc1-4e84-abb8-83d5ecfe32f4:wb_world": {
+        "shape": [
+          {
+            "x": 18000,
+            "z": 18000
+          },
+          {
+            "x": -18000,
+            "z": 18000
+          },
+          {
+            "x": -18000,
+            "z": -18000
+          },
+          {
+            "x": 18000,
+            "z": -18000
+          }
+        ],
+        "holes": [],
+        "shapeY": 63.0,
+        "depthTest": false,
+        "lineWidth": 2,
+        "lineColor": {
+          "r": 255,
+          "g": 0,
+          "b": 0,
+          "a": 1.0
+        },
+        "fillColor": {
+          "r": 0,
+          "g": 0,
+          "b": 0,
+          "a": 0.0
+        },
+        "detail": "World border",
+        "newTab": false,
+        "minDistance": 0.0,
+        "maxDistance": 10000000.0,
+        "type": "shape",
+        "label": "World border",
+        "position": {
+          "x": 0,
+          "y": 63,
+          "z": 0
+        },
+        "sorting": 0,
+        "listed": true
+      }
+    }
+  }
+}

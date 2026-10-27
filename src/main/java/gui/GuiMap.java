@@ -13,7 +13,11 @@ import game.data.entity.PlayerEntity;
 import gui.images.RegionImageHandler;
 import gui.markers.MapMarkerHandler;
 import gui.markers.PlayerMarker;
+import gui.overlay.OverlayManager;
+import gui.overlay.OverlayRenderer;
+import gui.overlay.OverlayShape;
 import javafx.animation.AnimationTimer;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyDoubleProperty;
 import javafx.fxml.FXML;
@@ -30,6 +34,7 @@ import javafx.scene.shape.FillRule;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 import javafx.scene.text.TextAlignment;
+import javafx.util.Duration;
 
 import java.util.Collection;
 import util.PrintUtils;
@@ -60,6 +65,10 @@ public class GuiMap {
 
     private RegionImageHandler regionHandler;
     private MapMarkerHandler markerHandler;
+    private OverlayManager overlayManager;
+    private OverlayRenderer overlayRenderer;
+    private OverlayShape hoveredShape;
+    private Dimension dimension;
     private Collection<PlayerEntity> otherPlayers;
 
     ReadOnlyDoubleProperty width;
@@ -87,6 +96,9 @@ public class GuiMap {
         this.zoomBehaviour = Config.smoothZooming() ? new SmoothZooming() : new SnapZooming();
         this.regionHandler = new RegionImageHandler();
         this.markerHandler = new MapMarkerHandler();
+        this.overlayManager = new OverlayManager();
+        this.overlayManager.loadFromConfig();
+        this.overlayRenderer = new OverlayRenderer(overlayManager);
         this.bounds = new Bounds();
 
         WorldManager manager = WorldManager.getInstance();
@@ -160,13 +172,22 @@ public class GuiMap {
             if (distance > 0) {
                 label += String.format("\t\tDistance: %s blocks", PrintUtils.humanReadable(distance));
             }
-            
+
+            hoveredShape = overlayManager.findAt(
+                bounds.getMinX() + (mouseX * blocksPerPixel), bounds.getMinZ() + (mouseY * blocksPerPixel),
+                6 * blocksPerPixel, getDimension()
+            );
+            if (hoveredShape != null && !hoveredShape.getLabel().isEmpty()) {
+                label += "\t\t" + hoveredShape.getLabel();
+            }
+
             coordsLabel.setText(label);
         });
         entityCanvas.setOnMouseExited(e -> {
             mouseOver = false;
             coordsLabel.setText("");
             cursorPos = null;
+            hoveredShape = null;
             if (playerHasConnected && !showErrorPrompt) {
                 helpLabel.setText("");
             }
@@ -255,6 +276,7 @@ public class GuiMap {
         RightClickMenu menu = new RightClickMenu(this);
         entityCanvas.setOnContextMenuRequested(e -> {
             menu.refreshPauseLabel();
+            menu.refreshOverlayItems(hoveredShape);
             menu.show(entityCanvas, e.getScreenX(), e.getScreenY());
         });
         entityCanvas.setOnMouseClicked(e -> {
@@ -351,6 +373,7 @@ public class GuiMap {
                 drawOtherPlayer(graphics, player);
             }
         }
+        overlayRenderer.draw(graphics, bounds, blocksPerPixel, getDimension(), hoveredShape);
         markerHandler.draw(bounds, blocksPerPixel, graphics, cursorPos);
         drawPlayer(graphics);
     }
@@ -421,7 +444,19 @@ public class GuiMap {
     }
 
     public void setDimension(Dimension dimension) {
+        this.dimension = dimension;
         regionHandler.setDimension(dimension);
+    }
+
+    /**
+     * The dimension shown on the map. Before joining a server there is none, overlays are then shown as overworld.
+     */
+    public Dimension getDimension() {
+        return dimension == null ? Dimension.OVERWORLD : dimension;
+    }
+
+    public OverlayManager getOverlayManager() {
+        return overlayManager;
     }
 
     public void showErrorMessage() {
@@ -468,6 +503,21 @@ public class GuiMap {
         this.statusMessage = str;
 
         Platform.runLater(this::updateStatusPrompt);
+    }
+
+    /**
+     * Show a status message for a few seconds, then go back to the default status.
+     */
+    public void flashStatusMessage(String str) {
+        setStatusMessage(str);
+
+        PauseTransition delay = new PauseTransition(Duration.seconds(6));
+        delay.setOnFinished(e -> {
+            if (statusMessage.equals(str)) {
+                setStatusMessage("");
+            }
+        });
+        delay.play();
     }
 
     public Coordinate2D getCursorCoordinates() {
