@@ -94,4 +94,44 @@ class OverlayShapeTest {
         assertThat(OverlayLayer.dimensionLabel("minecraft:the_nether")).isEqualTo("Nether");
         assertThat(OverlayLayer.dimensionLabel("custom:mining")).isEqualTo("custom:mining");
     }
+
+    private static long[] chunks(int... xz) {
+        long[] res = new long[xz.length / 2];
+        for (int i = 0; i < res.length; i++) {
+            res[i] = ChunkCoverage.key(xz[i * 2], xz[i * 2 + 1]);
+        }
+        java.util.Arrays.sort(res);
+        return res;
+    }
+
+    @Test
+    void edgesOnChunkBordersDontClaimNeighbours() {
+        assertThat(OverlayShape.rectangle(0, 0, 32, 16).getChunks()).containsExactly(chunks(0, 0, 1, 0));
+
+        // the hypotenuse only touches the corner of chunk 1,1
+        OverlayShape triangle = OverlayShape.polygon(new double[]{0, 32, 0}, new double[]{0, 0, 32}, List.of());
+        assertThat(triangle.getChunks()).containsExactly(chunks(0, 0, 1, 0, 0, 1));
+    }
+
+    @Test
+    void chunksInsideHolesAreExcluded() {
+        double[][] hole = {{16, 32, 32, 16}, {16, 16, 32, 32}};
+        OverlayShape shape = OverlayShape.polygon(new double[]{0, 48, 48, 0}, new double[]{0, 0, 48, 48}, Collections.singletonList(hole));
+
+        assertThat(shape.getChunks()).hasSize(8).doesNotContain(ChunkCoverage.key(1, 1));
+    }
+
+    @Test
+    void chunksOfOtherShapes() {
+        assertThat(OverlayShape.circle(8, 8, 10, 10).getChunks()).containsExactly(chunks(0, 0, -1, 0, 1, 0, 0, -1, 0, 1));
+        assertThat(OverlayShape.polyline(new double[]{0, 40}, new double[]{8, 8}).getChunks()).containsExactly(chunks(0, 0, 1, 0, 2, 0));
+        assertThat(OverlayShape.point(-1, -1).getChunks()).containsExactly(chunks(-1, -1));
+        assertThat(OverlayShape.point(-16, 0).getChunks()).containsExactly(chunks(-1, 0));
+    }
+
+    @Test
+    void largeShapesAreNotTracked() {
+        assertThat(OverlayShape.rectangle(0, 0, 16 * 256, 16 * 256).isCoverageTracked()).isTrue();
+        assertThat(OverlayShape.rectangle(0, 0, 16 * 257, 16 * 257).isCoverageTracked()).isFalse();
+    }
 }

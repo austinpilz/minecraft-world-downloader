@@ -177,8 +177,15 @@ public class GuiMap {
                 bounds.getMinX() + (mouseX * blocksPerPixel), bounds.getMinZ() + (mouseY * blocksPerPixel),
                 6 * blocksPerPixel, getDimension()
             );
-            if (hoveredShape != null && !hoveredShape.getLabel().isEmpty()) {
-                label += "\t\t" + hoveredShape.getLabel();
+            if (hoveredShape != null) {
+                String shapeLabel = hoveredShape.getLabel();
+                String coverage = hoveredShape.getCoverageText();
+                if (!coverage.isEmpty()) {
+                    shapeLabel = shapeLabel.isEmpty() ? coverage : shapeLabel + " (" + coverage + ")";
+                }
+                if (!shapeLabel.isEmpty()) {
+                    label += "\t\t" + shapeLabel;
+                }
             }
 
             coordsLabel.setText(label);
@@ -304,8 +311,16 @@ public class GuiMap {
         }
 
         ChunkImageFactory imageFactory = chunk.getChunkImageFactory();
-        imageFactory.onComplete((imageMap, isSaved) -> regionHandler.drawChunk(coord, imageMap, isSaved));
-        imageFactory.onSaved(() -> regionHandler.markChunkSaved(coord));
+        imageFactory.onComplete((imageMap, isSaved) -> {
+            regionHandler.drawChunk(coord, imageMap, isSaved);
+            if (isSaved) {
+                overlayManager.getCoverage().chunkSaved(coord.getDimension(), coord);
+            }
+        });
+        imageFactory.onSaved(() -> {
+            regionHandler.markChunkSaved(coord);
+            overlayManager.getCoverage().chunkSaved(coord.getDimension(), coord);
+        });
         imageFactory.requestImage();
     }
 
@@ -446,6 +461,7 @@ public class GuiMap {
     public void setDimension(Dimension dimension) {
         this.dimension = dimension;
         regionHandler.setDimension(dimension);
+        overlayManager.getCoverage().setDimension(getDimension());
     }
 
     /**

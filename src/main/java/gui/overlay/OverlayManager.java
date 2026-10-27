@@ -21,6 +21,9 @@ public class OverlayManager {
     // entries from the config whose file could not be read, kept so they aren't lost when the config is saved
     private final List<OverlayEntry> unavailable = new ArrayList<>();
 
+    private final ChunkCoverage coverage = new ChunkCoverage();
+    private int revision;
+
     public void loadFromConfig() {
         for (OverlayEntry entry : Config.getOverlays()) {
             try {
@@ -42,17 +45,20 @@ public class OverlayManager {
 
     public void add(OverlayLayer layer) {
         layers.add(layer);
+        revision++;
         save();
     }
 
     public void remove(OverlayLayer layer) {
         layers.remove(layer);
+        revision++;
         save();
     }
 
     public void clear() {
         layers.clear();
         unavailable.clear();
+        revision++;
         save();
     }
 
@@ -62,6 +68,17 @@ public class OverlayManager {
 
         Config.setOverlays(entries);
         Config.save();
+    }
+
+    public ChunkCoverage getCoverage() {
+        return coverage;
+    }
+
+    /**
+     * Apply newly saved chunks to the shapes' captured counts. Must be called on the JavaFX thread.
+     */
+    public void updateCoverage() {
+        coverage.update(layers, revision);
     }
 
     public List<OverlayLayer> getLayers() {

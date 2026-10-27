@@ -1,6 +1,8 @@
 package gui.overlay;
 
 import gui.Bounds;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import javafx.scene.paint.Color;
 
@@ -13,6 +15,7 @@ public class OverlayShape {
 
     static final Color DEFAULT_STROKE = Color.web("#ffcc00");
     static final Color DEFAULT_FILL = Color.web("#ffcc00", 0.15);
+    private static final double CHUNK_EDGE_MARGIN = 0.01;
 
     private final Kind kind;
     private final double[] x;
@@ -31,6 +34,11 @@ public class OverlayShape {
 
     private double minX = Double.MAX_VALUE, maxX = -Double.MAX_VALUE;
     private double minZ = Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;
+
+    // chunks touched by this shape, computed on first use. Only accessed from the JavaFX thread.
+    private long[] chunks;
+    private boolean chunksComputed;
+    private int capturedChunks;
 
     private OverlayShape(Kind kind, double[] x, double[] z, List<double[][]> holes, double radiusX, double radiusZ) {
         if (x.length != z.length) {
@@ -168,6 +176,143 @@ public class OverlayShape {
             }
         }
         return inside;
+    }
+
+    /**
+     * The chunks this shape touches, as sorted {@link ChunkCoverage#key} values. Returns null for shapes covering more
+     * than {@link ChunkCoverage#MAX_SHAPE_CHUNKS} chunks, such as a world border, which are not tracked.
+     */
+    long[] getChunks() {
+        if (!chunksComputed) {
+            chunks = computeChunks();
+            chunksComputed = true;
+        }
+        return chunks;
+    }
+
+    private long[] computeChunks() {
+        if (kind == Kind.POINT) {
+            return new long[]{ChunkCoverage.key((int) Math.floor(x[0] / 16), (int) Math.floor(z[0] / 16))};
+        }
+
+        int minChunkX = (int) Math.floor((minX + CHUNK_EDGE_MARGIN) / 16);
+        int maxChunkX = (int) Math.floor((maxX - CHUNK_EDGE_MARGIN) / 16);
+        int minChunkZ = (int) Math.floor((minZ + CHUNK_EDGE_MARGIN) / 16);
+        int maxChunkZ = (int) Math.floor((maxZ - CHUNK_EDGE_MARGIN) / 16);
+        if ((long) (maxChunkX - minChunkX + 1) * (maxChunkZ - minChunkZ + 1) > ChunkCoverage.MAX_SHAPE_CHUNKS) {
+            return null;
+        }
+
+        List<Long> res = new ArrayList<>();
+        for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+            for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                // shrink the chunk slightly, so a shape edge lying exactly on a chunk border doesn't claim the neighbour
+                double left = chunkX * 16 + CHUNK_EDGE_MARGIN;
+                double top = chunkZ * 16 + CHUNK_EDGE_MARGIN;
+                double right = chunkX * 16 + 16 - CHUNK_EDGE_MARGIN;
+                double bottom = chunkZ * 16 + 16 - CHUNK_EDGE_MARGIN;
+                if (overlapsBox(left, top, right, bottom)) {
+                    res.add(ChunkCoverage.key(chunkX, chunkZ));
+                }
+            }
+        }
+        long[] sorted = res.stream().mapToLong(Long::longValue).toArray();
+        Arrays.sort(sorted);
+        return sorted;
+    }
+
+    private boolean overlapsBox(double left, double top, double right, double bottom) {
+        return switch (kind) {
+            case POLYGON -> {
+                if (contains((left + right) / 2, (top + bottom) / 2, 0)) {
+                    yield true;
+                }
+                boolean crosses = ringCrossesBox(x, z, true, left, top, right, bottom);
+                for (double[][] hole : holes) {
+                    crosses |= ringCrossesBox(hole[0], hole[1], true, left, top, right, bottom);
+                }
+                yield crosses;
+            }
+            case POLYLINE -> ringCrossesBox(x, z, false, left, top, right, bottom);
+            case CIRCLE -> {
+                double dx = (Math.max(left, Math.min(x[0], right)) - x[0]) / radiusX;
+                double dz = (Math.max(top, Math.min(z[0], bottom)) - z[0]) / radiusZ;
+                yield dx * dx + dz * dz <= 1;
+            }
+            case POINT -> x[0] >= left && x[0] <= right && z[0] >= top && z[0] <= bottom;
+        };
+    }
+
+    private static boolean ringCrossesBox(double[] x, double[] z, boolean closed, double left, double top, double right, double bottom) {
+        int segments = closed ? x.length : x.length - 1;
+        for (int i = 0; i < segments; i++) {
+            int j = (i + 1) % x.length;
+            if (segmentCrossesBox(x[i], z[i], x[j], z[j], left, top, right, bottom)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Liang-Barsky clipping: whether any part of the segment lies within the box.
+     */
+    private static boolean segmentCrossesBox(double x1, double z1, double x2, double z2, double left, double top, double right, double bottom) {
+        double dx = x2 - x1;
+        double dz = z2 - z1;
+        double[] p = {-dx, dx, -dz, dz};
+        double[] q = {x1 - left, right - x1, z1 - top, bottom - z1};
+
+        double start = 0, end = 1;
+        for (int i = 0; i < 4; i++) {
+            if (p[i] == 0) {
+                if (q[i] < 0) {
+                    return false;
+                }
+            } else {
+                double t = q[i] / p[i];
+                if (p[i] < 0) {
+                    start = Math.max(start, t);
+                } else {
+                    end = Math.min(end, t);
+                }
+            }
+        }
+        return start <= end;
+    }
+
+    int getCapturedChunks() {
+        return capturedChunks;
+    }
+
+    void setCapturedChunks(int capturedChunks) {
+        this.capturedChunks = capturedChunks;
+    }
+
+    /**
+     * Whether coverage is tracked for this shape, i.e. it's not too large to count its chunks.
+     */
+    public boolean isCoverageTracked() {
+        return getChunks() != null;
+    }
+
+    /**
+     * Whether every chunk this shape touches has been saved.
+     */
+    public boolean isCaptured() {
+        long[] chunks = getChunks();
+        return chunks != null && chunks.length > 0 && capturedChunks >= chunks.length;
+    }
+
+    /**
+     * e.g. "112/169 chunks", or an empty string if coverage isn't tracked for this shape.
+     */
+    public String getCoverageText() {
+        long[] chunks = getChunks();
+        if (chunks == null) {
+            return "";
+        }
+        return capturedChunks + "/" + chunks.length + " chunks";
     }
 
     private static double segmentDistance(double px, double pz, double x1, double z1, double x2, double z2) {

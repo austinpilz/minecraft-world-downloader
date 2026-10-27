@@ -17,6 +17,7 @@ import javafx.scene.text.TextAlignment;
 /**
  * Draws the imported overlay shapes on top of the chunk map. Labels are only drawn once a shape is large enough on
  * screen to fit them, so a zoomed-out map doesn't turn into a wall of text. The hovered shape is always labelled.
+ * Shapes whose chunks have all been saved are drawn in green.
  */
 public class OverlayRenderer {
     private static final Font LABEL_FONT = Font.font(null, FontWeight.BOLD, 12);
@@ -27,6 +28,8 @@ public class OverlayRenderer {
     private static final double CHUNK_GRID_MIN_PIXELS = 6;
     private static final Color HIGHLIGHT_COLOR = Color.WHITE;
     private static final Color CHUNK_GRID_COLOR = Color.rgb(255, 255, 255, .45);
+    private static final Color CAPTURED_STROKE = Color.web("#33dd55");
+    private static final Color CAPTURED_FILL = Color.web("#33dd55", 0.3);
 
     private final OverlayManager manager;
     private final List<OverlayShape> visible = new ArrayList<>();
@@ -39,6 +42,7 @@ public class OverlayRenderer {
     }
 
     public void draw(GraphicsContext graphics, Bounds bounds, double blocksPerPixel, Dimension dimension, OverlayShape hovered) {
+        manager.updateCoverage();
         if (!Config.showOverlays()) {
             return;
         }
@@ -86,9 +90,13 @@ public class OverlayRenderer {
     }
 
     private void drawShape(GraphicsContext graphics, OverlayShape shape, boolean highlight) {
+        // shapes whose chunks have all been saved turn green
+        boolean captured = shape.isCaptured();
+        Color stroke = captured ? CAPTURED_STROKE : shape.getStroke();
+
         graphics.setLineWidth(shape.getLineWidth() + (highlight ? 1 : 0));
-        graphics.setStroke(highlight ? HIGHLIGHT_COLOR : shape.getStroke());
-        graphics.setFill(shape.getFill());
+        graphics.setStroke(highlight ? HIGHLIGHT_COLOR : stroke);
+        graphics.setFill(captured ? CAPTURED_FILL : shape.getFill());
 
         switch (shape.getKind()) {
             case POLYGON -> {
@@ -123,7 +131,7 @@ public class OverlayRenderer {
                 double size = highlight ? POINT_SIZE + 3 : POINT_SIZE;
                 double left = screenX(shape.getX()[0]) - size / 2;
                 double top = screenZ(shape.getZ()[0]) - size / 2;
-                graphics.setFill(shape.getStroke());
+                graphics.setFill(stroke);
                 graphics.fillOval(left, top, size, size);
                 graphics.setLineWidth(1);
                 graphics.setStroke(highlight ? HIGHLIGHT_COLOR : Color.BLACK);

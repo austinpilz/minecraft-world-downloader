@@ -83,7 +83,9 @@ Optionally, the proxy can connect to the remote Minecraft server through a SOCKS
 Many servers publish a web map with region outlines, world borders, rail lines and points of interest. You can import
 those shapes into the downloader's map, so you can see which chunks still need to be visited to cover a town or a
 claim. The shapes are drawn on top of the chunk map, the shape under the cursor is highlighted and its name is shown
-next to the coordinates.
+next to the coordinates, along with how many of its chunks have been saved (e.g. `hirdarth (112/182 chunks)`). Once
+every chunk a shape touches has been saved, the shape turns green. Chunks already in the world folder count too, so
+progress carries over between sessions. Very large shapes, such as a world border, are not counted.
 
 Right-click the map and open **Map overlays**:
 - **Import overlay file...** reads a BlueMap or Dynmap marker file, or a file in the simple format described below.
