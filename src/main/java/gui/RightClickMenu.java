@@ -10,6 +10,11 @@ import game.data.dimension.Dimension;
 import game.data.region.McaFile;
 import gui.images.ImageMode;
 import gui.images.RegionImageHandler;
+import gui.overlay.OverlayImportDialog;
+import gui.overlay.OverlayLayer;
+import gui.overlay.OverlayManager;
+import gui.overlay.OverlaySet;
+import gui.overlay.OverlayShape;
 import java.awt.Toolkit;
 import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.StringSelection;
@@ -29,6 +34,10 @@ public class RightClickMenu extends ContextMenu {
     final static String PROMPT_RESUME = "Resume chunk saving";
 
     private final MenuItem pauseMenuItem;
+    private final GuiMap handler;
+    private final Menu overlayMenu = new Menu("Map overlays");
+    private final MenuItem copyShapeItem;
+    private OverlayShape clickedShape;
 
     final List<MenuItem> renderModes = List.of(
         construct("Automatic", e -> setRenderMode(null, e)),
@@ -45,6 +54,7 @@ public class RightClickMenu extends ContextMenu {
     }
 
     public RightClickMenu(GuiMap handler) {
+        this.handler = handler;
         List<MenuItem> menu = this.getItems();
 
         pauseMenuItem = construct(PROMPT_PAUSE, event -> {
@@ -98,12 +108,21 @@ public class RightClickMenu extends ContextMenu {
             clipboard.setContents(selection, selection);
         }));
 
+        copyShapeItem = construct("Copy shape name", e -> {
+            if (clickedShape != null) {
+                StringSelection selection = new StringSelection(clickedShape.getLabel());
+                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
+            }
+        });
+        menu.add(copyShapeItem);
+
         menu.add(new SeparatorMenuItem());
 
         ImageMode current = RegionImageHandler.getOverrideMode();
 
 
         menu.add(new Menu("Render mode", null, renderModes.toArray(new MenuItem[0])));
+        menu.add(overlayMenu);
         menu.add(construct("Settings", e -> GuiManager.loadWindowSettings()));
 
         menu.add(construct("Save & Exit", e -> {
@@ -121,6 +140,84 @@ public class RightClickMenu extends ContextMenu {
      */
     public void refreshPauseLabel() {
         pauseMenuItem.setText(WorldManager.getInstance().isPaused() ? PROMPT_RESUME : PROMPT_PAUSE);
+    }
+
+    /**
+     * The overlay submenu lists the imported files, so it's rebuilt every time the menu is shown.
+     *
+     * @param shape the overlay shape under the cursor, if any
+     */
+    public void refreshOverlayItems(OverlayShape shape) {
+        clickedShape = shape;
+        copyShapeItem.setVisible(shape != null && !shape.getLabel().isEmpty());
+
+        OverlayManager manager = handler.getOverlayManager();
+        List<MenuItem> items = overlayMenu.getItems();
+        items.clear();
+
+        MenuItem importItem = new MenuItem("Import overlay file...");
+        importItem.setOnAction(e -> {
+            String status = OverlayImportDialog.show(getOwnerWindow(), manager, handler.getDimension());
+            if (status != null) {
+                handler.flashStatusMessage(status);
+            }
+        });
+        items.add(importItem);
+
+        CheckMenuItem showItem = new CheckMenuItem("Show overlays");
+        showItem.setSelected(Config.showOverlays());
+        showItem.setOnAction(e -> {
+            Config.setShowOverlays(showItem.isSelected());
+            Config.save();
+        });
+        items.add(showItem);
+
+        CheckMenuItem gridItem = new CheckMenuItem("Chunk grid in hovered shape");
+        gridItem.setSelected(Config.overlayChunkGrid());
+        gridItem.setOnAction(e -> {
+            Config.setOverlayChunkGrid(gridItem.isSelected());
+            Config.save();
+        });
+        items.add(gridItem);
+
+        if (manager.getLayers().isEmpty()) {
+            return;
+        }
+        items.add(new SeparatorMenuItem());
+
+        for (OverlayLayer layer : List.copyOf(manager.getLayers())) {
+            Menu layerMenu = new Menu(String.format("%s (%s, %d shapes)",
+                layer.getName(), OverlayLayer.dimensionLabel(layer.getDimension()), layer.countShapes()));
+
+            CheckMenuItem layerShow = new CheckMenuItem("Show");
+            layerShow.setSelected(layer.isVisible());
+            layerShow.setOnAction(e -> {
+                layer.setVisible(layerShow.isSelected());
+                manager.save();
+            });
+            layerMenu.getItems().addAll(layerShow, new SeparatorMenuItem());
+
+            for (OverlaySet set : layer.getSets()) {
+                CheckMenuItem setItem = new CheckMenuItem(set.getLabel() + " (" + set.getShapes().size() + ")");
+                setItem.setSelected(layer.isSetVisible(set));
+                setItem.setOnAction(e -> {
+                    layer.setSetVisible(set, setItem.isSelected());
+                    manager.save();
+                });
+                layerMenu.getItems().add(setItem);
+            }
+
+            MenuItem removeItem = new MenuItem("Remove");
+            removeItem.setOnAction(e -> manager.remove(layer));
+            layerMenu.getItems().addAll(new SeparatorMenuItem(), removeItem);
+
+            items.add(layerMenu);
+        }
+
+        MenuItem removeAll = new MenuItem("Remove all overlays");
+        removeAll.setOnAction(e -> manager.clear());
+        items.add(new SeparatorMenuItem());
+        items.add(removeAll);
     }
 
     private void addDevOptions(List<MenuItem> menu, GuiMap handler) {

@@ -8,13 +8,16 @@ import game.data.registries.RegistryManager;
 import game.protocol.Protocol;
 import game.protocol.ProtocolVersionHandler;
 import gui.GuiManager;
+import gui.overlay.OverlayEntry;
 import java.io.File;
 import java.io.FileReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
 import javafx.application.Platform;
@@ -525,6 +528,11 @@ public class Config {
     // not really important enough to have an option for, can change it in config file
     public boolean smoothZooming = true;
 
+    // map overlays, managed from the map's right-click menu
+    public List<OverlayEntry> overlays = new ArrayList<>();
+    public boolean showOverlays = true;
+    public boolean overlayChunkGrid = false;
+
     // getters
     public static int getExtendedRenderDistance() {
         return instance.extendedRenderDistance;
@@ -590,6 +598,30 @@ public class Config {
     }
     public static boolean enableCaveRenderMode() {
         return instance.enableCaveRenderMode;
+    }
+
+    public static List<OverlayEntry> getOverlays() {
+        return instance.overlays == null ? List.of() : instance.overlays;
+    }
+
+    public static void setOverlays(List<OverlayEntry> overlays) {
+        instance.overlays = overlays;
+    }
+
+    public static boolean showOverlays() {
+        return instance.showOverlays;
+    }
+
+    public static void setShowOverlays(boolean showOverlays) {
+        instance.showOverlays = showOverlays;
+    }
+
+    public static boolean overlayChunkGrid() {
+        return instance.overlayChunkGrid;
+    }
+
+    public static void setOverlayChunkGrid(boolean overlayChunkGrid) {
+        instance.overlayChunkGrid = overlayChunkGrid;
     }
 
     public static MicrosoftAuthHandler getMicrosoftAuth() {

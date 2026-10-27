@@ -1,0 +1,117 @@
+{
+  "sets": {
+    "markers": {
+      "hide": false,
+      "circles": {},
+      "areas": {},
+      "label": "Spawn Locations",
+      "markers": {
+        "_spawn_new": {
+          "markup": false,
+          "x": 0.0,
+          "icon": "star",
+          "y": 91.0,
+          "dim": "16x16",
+          "z": 0.0,
+          "label": "Spawn"
+        }
+      },
+      "lines": {},
+      "layerprio": 300
+    },
+    "expo": {
+      "hide": false,
+      "circles": {},
+      "areas": {},
+      "label": "[X] MRT Expo Line",
+      "markers": {
+        "xe47": {
+          "markup": false,
+          "x": 20457.0,
+          "icon": "expo",
+          "y": 64.0,
+          "dim": "32x32",
+          "z": -3147.0,
+          "label": "XE47 Station"
+        },
+        "xe48": {
+          "markup": false,
+          "x": 21197.0,
+          "icon": "expo",
+          "y": 81.0,
+          "dim": "32x32",
+          "z": -3147.0,
+          "label": "XE48 Station"
+        }
+      },
+      "lines": {
+        "xwx1": {
+          "color": "#000000",
+          "markup": false,
+          "x": [
+            -9000.0,
+            -9000.0,
+            -8992.0,
+            -8992.0,
+            -8992.0,
+            -8992.0
+          ],
+          "y": [
+            101.0,
+            101.0,
+            101.0,
+            101.0,
+            96.0,
+            96.0
+          ],
+          "weight": 3,
+          "z": [
+            -2521.0,
+            -2566.0,
+            -2596.0,
+            -3051.0,
+            -3070.0,
+            -3251.0
+          ],
+          "label": "MRT Expo Line West - Extension 1 (XWX1)",
+          "opacity": 0.8
+        }
+      },
+      "layerprio": 124
+    },
+    "chunky.markerset": {
+      "hide": false,
+      "circles": {},
+      "areas": {
+        "area_1": {
+          "fillcolor": "#000000",
+          "ytop": 64.0,
+          "color": "#FF0000",
+          "markup": false,
+          "x": [
+            30000.5,
+            -29999.5,
+            -29999.5,
+            30000.5
+          ],
+          "weight": 3,
+          "z": [
+            -29999.5,
+            -29999.5,
+            30000.5,
+            30000.5
+          ],
+          "ybottom": 64.0,
+          "label": "World Border",
+          "opacity": 1.0,
+          "fillopacity": 0.0
+        }
+      },
+      "label": "World Border",
+      "markers": {},
+      "lines": {},
+      "layerprio": 0
+    }
+  },
+  "timestamp": 1793126410332
+}
