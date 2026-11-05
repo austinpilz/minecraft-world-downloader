@@ -28,7 +28,11 @@ public class ServerBoundHandshakePacketHandler extends PacketHandler {
             }
 
             Config.setProtocolVersion(protocolVersion);
-            getConnectionManager().getEncryptionManager().sendMaskedHandshake(protocolVersion, nextMode, getHostExtensions(host));
+            if (getConnectionManager().isProxyAccounts()) {
+                getConnectionManager().rememberHandshake(protocolVersion, nextMode, getHostExtensions(host));
+            } else {
+                getConnectionManager().getEncryptionManager().sendMaskedHandshake(protocolVersion, nextMode, getHostExtensions(host));
+            }
             return false;
         });
     }

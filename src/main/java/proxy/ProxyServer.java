@@ -7,6 +7,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static util.ExceptionHandling.attempt;
@@ -67,6 +68,11 @@ public class ProxyServer extends Thread {
             attempt(() -> {
                 // Wait for a connection on the local port
                 client.set(ss.get().accept());
+
+                if (connectionManager.isProxyAccounts()) {
+                    runBotSession(client.get());
+                    return;
+                }
 
                 final InputStream streamFromClient = client.get().getInputStream();
                 final OutputStream streamToClient = client.get().getOutputStream();
@@ -132,5 +138,82 @@ public class ProxyServer extends Thread {
                 if (client.get() != null) { attempt(client.get()::close); }
             });
         }
+    }
+
+    /**
+     * Handle one client with proxy-held accounts. The client connects offline, and the connection to the server is
+     * only opened once the bot has logged in, since that decides which exit it goes through.
+     */
+    private void runBotSession(Socket client) throws java.io.IOException {
+        final InputStream streamFromClient = client.getInputStream();
+        final OutputStream streamToClient = client.getOutputStream();
+        connectionManager.getEncryptionManager().setStreamToClient(streamToClient);
+
+        AtomicReference<Socket> server = new AtomicReference<>();
+        AtomicBoolean ended = new AtomicBoolean(false);
+
+        // either side closing ends the session, and only the first to notice resets the connection: a late reset
+        // from the old session's server thread would otherwise hit the next bot to connect
+        Runnable end = () -> {
+            if (!ended.compareAndSet(false, true)) {
+                return;
+            }
+            attempt(client::close);
+            Socket serverSocket = server.get();
+            if (serverSocket != null) {
+                attempt(serverSocket::close);
+            }
+            connectionManager.reset();
+        };
+
+        connectionManager.setServerConnector(new ConnectionManager.ServerConnector() {
+            @Override
+            public void connect(SocksProxyDetails exit) throws java.io.IOException {
+                Socket socket = connectionDetails.getClientSocket(exit);
+                server.set(socket);
+                connectionManager.getEncryptionManager().setStreamToServer(socket.getOutputStream());
+
+                Thread serverListener = new Thread(() -> {
+                    final byte[] reply = new byte[4096];
+                    attempt(() -> {
+                        InputStream streamFromServer = socket.getInputStream();
+                        int bytesRead;
+                        while ((bytesRead = streamFromServer.read(reply)) != -1) {
+                            onClientBoundPacket.pushData(reply, bytesRead);
+                        }
+                    }, (ex) -> {
+                        if (!ended.get()) {
+                            ex.printStackTrace();
+                        }
+                    });
+                    System.out.println("Server closed the connection.");
+                    end.run();
+                }, "Proxy Server Listener");
+                serverListener.setPriority(10);
+                serverListener.start();
+            }
+
+            @Override
+            public void disconnectClient() {
+                // the client's read loop notices and ends the session, outside of the packet handler that asked for this
+                attempt(client::close);
+            }
+        });
+
+        connectionManager.setMode(NetworkMode.HANDSHAKE);
+
+        final byte[] request = new byte[4096];
+        attempt(() -> {
+            int bytesRead;
+            while ((bytesRead = streamFromClient.read(request)) != -1) {
+                onServerBoundPacket.pushData(request, bytesRead);
+            }
+        }, (ex) -> {
+            if (!ended.get()) {
+                ex.printStackTrace();
+            }
+        });
+        System.out.println("Client closed the connection. Waiting for new connection...");
+        end.run();
     }
 }

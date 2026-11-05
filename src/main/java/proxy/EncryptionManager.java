@@ -30,6 +30,8 @@ import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import packets.builder.PacketBuilder;
 import packets.lib.ByteQueue;
+import proxy.accounts.LoginPackets;
+import proxy.auth.AuthDetails;
 import proxy.auth.ClientAuthenticator;
 import proxy.auth.ServerAuthenticator;
 
@@ -39,7 +41,9 @@ import proxy.auth.ServerAuthenticator;
 public class EncryptionManager {
     private static final String ENCRYPTION_TYPE = "AES/CFB8/NoPadding";
     private final PacketInjector packetInjector;
-    private boolean encryptionEnabled = false;
+    // the two legs are only encrypted separately with proxy-held accounts, where the client connects offline
+    private volatile boolean clientLegEncrypted = false;
+    private volatile boolean serverLegEncrypted = false;
     private String serverId;
     private RSAPublicKey serverRealPublicKey;
     private byte[] nonce;
@@ -72,8 +76,18 @@ public class EncryptionManager {
         this.clientAuthenticator = new ClientAuthenticator();
     }
 
-    public boolean isEncryptionEnabled() {
-        return encryptionEnabled;
+    /**
+     * Whether traffic between the client and the proxy is encrypted.
+     */
+    public boolean isClientLegEncrypted() {
+        return clientLegEncrypted;
+    }
+
+    /**
+     * Whether traffic between the proxy and the server is encrypted.
+     */
+    public boolean isServerLegEncrypted() {
+        return serverLegEncrypted;
     }
 
     public void setServerEncryptionRequest(byte[] encoded, byte[] nonce, String serverId, boolean shouldAuthenticate) {
@@ -194,14 +208,14 @@ public class EncryptionManager {
      * Encrypts a given byte array using the encryption stream for the client-side.
      */
     private byte[] clientBoundEncrypt(byte[] bytes) {
-        return encrypt(bytes, clientBoundEncryptor);
+        return encrypt(bytes, clientBoundEncryptor, clientLegEncrypted);
     }
 
     /**
-     * Encrypts a given byte array using the the given encryptor, if encryption has been enabled.
+     * Encrypts a given byte array using the the given encryptor, if encryption has been enabled for that leg.
      */
-    private byte[] encrypt(byte[] bytes, Cipher encryptor) {
-        if (!encryptionEnabled) { return bytes; }
+    private byte[] encrypt(byte[] bytes, Cipher encryptor, boolean enabled) {
+        if (!enabled) { return bytes; }
 
         try {
             return encryptor.update(bytes);
@@ -381,8 +395,55 @@ public class EncryptionManager {
     }
 
     public void streamToServer(ByteQueue bytes) throws IOException {
+        // with proxy-held accounts there's no server connection until the client has logged in, and a status ping
+        // never gets one
+        if (streamToServer == null) {
+            return;
+        }
+
         // System.out.println("Writing bytes to server: " + bytes.size() + " :: " + bytes);
         streamTo(streamToServer, bytes, this::serverBoundEncrypt);
+    }
+
+    /**
+     * Answer the server's encryption request ourselves, for a proxy-held account. The client connected offline so
+     * it never sees the request, and only the leg to the server is encrypted. The join is made through the bot's
+     * exit, since the server checks the join against the IP it sees the connection come from.
+     * @param account the bot's account
+     * @param exit    the SOCKS proxy the bot connects through, or null if it connects directly
+     */
+    public void answerEncryptionRequest(byte[] encoded, byte[] nonce, String serverId, boolean shouldAuthenticate,
+                                        AuthDetails account, SocksProxyDetails exit) {
+        answerEncryptionRequest(encoded, nonce, serverId, shouldAuthenticate, account, exit, Config.getProtocolVersion());
+    }
+
+    public void answerEncryptionRequest(byte[] encoded, byte[] nonce, String serverId, boolean shouldAuthenticate,
+                                        AuthDetails account, SocksProxyDetails exit, int protocolVersion) {
+        attempt(() -> {
+            this.nonce = nonce;
+            this.serverId = serverId;
+
+            KeyFactory kf = KeyFactory.getInstance("RSA");
+            serverRealPublicKey = (RSAPublicKey) kf.generatePublic(new X509EncodedKeySpec(encoded));
+
+            // there's no client secret to pass on here, so the proxy picks one
+            clientSharedSecret = new byte[16];
+            new SecureRandom().nextBytes(clientSharedSecret);
+
+            if (shouldAuthenticate) {
+                clientAuthenticator.join(account, generateServerHash(), exit);
+            }
+
+            Cipher cipher = Cipher.getInstance("RSA");
+            cipher.init(Cipher.ENCRYPT_MODE, serverRealPublicKey);
+            byte[] sharedSecret = cipher.doFinal(clientSharedSecret);
+            byte[] verifyToken = cipher.doFinal(nonce);
+
+            // the ciphers are set up before the response goes out, since the server's next packet can arrive on the
+            // other thread right after it. The response itself is the last unencrypted packet.
+            enableServerLegEncryption();
+            streamTo(streamToServer, LoginPackets.encryptionResponse(protocolVersion, sharedSecret, verifyToken).build(), bytes -> bytes);
+        });
     }
 
     /**
@@ -406,12 +467,32 @@ public class EncryptionManager {
             serverBoundDecryptor = Cipher.getInstance(ENCRYPTION_TYPE);
             serverBoundDecryptor.init(Cipher.DECRYPT_MODE, k, ivspec);
 
-            encryptionEnabled = true;
+            clientLegEncrypted = true;
+            serverLegEncrypted = true;
+        });
+    }
+
+    /**
+     * Enable encryption for the leg to the server only. Used with proxy-held accounts, where the client connects
+     * offline and so never encrypts its connection to the proxy.
+     */
+    private void enableServerLegEncryption() {
+        attempt(() -> {
+            IvParameterSpec ivspec = new IvParameterSpec(clientSharedSecret);
+            SecretKeySpec k = new SecretKeySpec(clientSharedSecret, "AES");
+
+            clientBoundDecryptor = Cipher.getInstance(ENCRYPTION_TYPE);
+            clientBoundDecryptor.init(Cipher.DECRYPT_MODE, k, ivspec);
+
+            serverBoundEncryptor = Cipher.getInstance(ENCRYPTION_TYPE);
+            serverBoundEncryptor.init(Cipher.ENCRYPT_MODE, k, ivspec);
+
+            serverLegEncrypted = true;
         });
     }
 
     private byte[] serverBoundEncrypt(byte[] bytes) {
-        return encrypt(bytes, serverBoundEncryptor);
+        return encrypt(bytes, serverBoundEncryptor, serverLegEncrypted);
     }
 
     public void setStreamToClient(OutputStream streamToClient) {
@@ -423,11 +504,11 @@ public class EncryptionManager {
     }
 
     public byte[] serverBoundDecrypt(byte[] bytes) {
-        return decrypt(bytes, serverBoundDecryptor);
+        return decrypt(bytes, serverBoundDecryptor, clientLegEncrypted);
     }
 
-    private byte[] decrypt(byte[] bytes, Cipher decryptor) {
-        if (!encryptionEnabled) { return bytes; }
+    private byte[] decrypt(byte[] bytes, Cipher decryptor, boolean enabled) {
+        if (!enabled) { return bytes; }
 
         try {
             return decryptor.update(bytes);
@@ -437,11 +518,13 @@ public class EncryptionManager {
     }
 
     public byte[] clientBoundDecrypt(byte[] bytes) {
-        return decrypt(bytes, clientBoundDecryptor);
+        return decrypt(bytes, clientBoundDecryptor, serverLegEncrypted);
     }
 
     public void reset() {
-        encryptionEnabled = false;
+        clientLegEncrypted = false;
+        serverLegEncrypted = false;
+        streamToServer = null;
         this.packetInjector.clear();
         clientAuthenticator.reset();
     }

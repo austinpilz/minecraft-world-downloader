@@ -19,6 +19,11 @@ public class ServerBoundLoginPacketHandler extends PacketHandler {
 
             devPrint("Login by: " + username);
 
+            if (getConnectionManager().isProxyAccounts()) {
+                getConnectionManager().loginAsBot(username);
+                return false;
+            }
+
             getConnectionManager().getEncryptionManager().setUsername(username);
             return true;
         });

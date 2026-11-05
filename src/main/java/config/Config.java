@@ -30,6 +30,9 @@ import proxy.ConnectionDetails;
 import proxy.ConnectionManager;
 import proxy.PacketInjector;
 import proxy.SocksProxyDetails;
+import proxy.accounts.AccountCommands;
+import proxy.accounts.AccountStore;
+import proxy.accounts.ExitChecker;
 import proxy.auth.AuthDetails;
 import proxy.auth.AuthenticationMethod;
 import proxy.auth.MicrosoftAuthHandler;
@@ -116,11 +119,55 @@ public class Config {
             System.exit(1);
         }
 
+        if (instance.runAccountCommands()) {
+            System.exit(0);
+        }
+
         instance.settingsComplete();
+    }
+
+    /**
+     * Run the commands that manage the proxy's accounts, which don't start the proxy.
+     * @return true if one was run
+     */
+    private boolean runAccountCommands() {
+        boolean requested = addAccount || !addBot.isEmpty() || listBots || testPool;
+        if (!requested) {
+            return false;
+        }
+
+        AccountStore store = AccountStore.get();
+        try {
+            if (!socksPoolFile.isEmpty()) {
+                AccountCommands.loadPoolFile(store, socksPoolFile, socksProxyUsername, socksProxyPassword);
+            }
+            if (addAccount) {
+                AccountCommands.addAccount(store);
+            }
+            if (!addBot.isEmpty()) {
+                AccountCommands.addBot(store, addBot);
+            }
+            if (listBots) {
+                AccountCommands.listBots(store);
+            }
+            if (testPool && !AccountCommands.testPool(store, new ExitChecker())) {
+                System.exit(2);
+            }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException ex) {
+            System.err.println(ex.getMessage());
+            System.exit(1);
+        }
+        return true;
     }
 
     public static ConnectionDetails getConnectionDetails() {
         return instance.connectionDetails;
+    }
+
+    public static int getProtocolVersion() {
+        return instance.protocolVersion;
     }
 
     public static void setProtocolVersion(int protocolVersion) {
@@ -529,6 +576,30 @@ public class Config {
             usage = "Password for a SOCKS5 proxy that requires authentication. Not saved to the config file.")
     public transient String socksProxyPassword = "";
 
+    @Option(name = "--proxy-accounts",
+            usage = "Log bots in with the Microsoft accounts held by the proxy (see --add-account). Clients connect offline using a bot's name, and the proxy joins the server as the bot's account through the bot's SOCKS exit.")
+    public boolean proxyAccounts = false;
+
+    @Option(name = "--add-account",
+            usage = "Add a Microsoft account to the proxy with a device code login, then exit.")
+    public transient boolean addAccount = false;
+
+    @Option(name = "--add-bot", metaVar = "CLIENT:ACCOUNT[@HOST:PORT]",
+            usage = "Add a bot, then exit. CLIENT is the name the client connects with, ACCOUNT one of the added accounts, and the optional exit one of the SOCKS pool's entries.")
+    public transient String addBot = "";
+
+    @Option(name = "--list-bots",
+            usage = "List the proxy's accounts, bots and SOCKS pool size, then exit.")
+    public transient boolean listBots = false;
+
+    @Option(name = "--test-pool",
+            usage = "Connect through every entry of the SOCKS pool and show its exit IP, then exit.")
+    public transient boolean testPool = false;
+
+    @Option(name = "--socks-pool", metaVar = "FILE",
+            usage = "Read the pool of SOCKS5 proxies bots go through from a file, one 'host[:port]' per line. Credentials come from --socks-proxy-username/--socks-proxy-password, or 'user:pass@host:port' per line.")
+    public transient String socksPoolFile = "";
+
     // not really important enough to have an option for, can change it in config file
     public boolean smoothZooming = true;
 
@@ -602,6 +673,22 @@ public class Config {
     }
     public static boolean enableCaveRenderMode() {
         return instance.enableCaveRenderMode;
+    }
+
+    public static boolean proxyAccounts() {
+        return instance.proxyAccounts;
+    }
+
+    public static String socksPoolFile() {
+        return instance.socksPoolFile;
+    }
+
+    public static String socksProxyUsername() {
+        return instance.socksProxyUsername;
+    }
+
+    public static String socksProxyPassword() {
+        return instance.socksProxyPassword;
     }
 
     public static boolean coverageMap() {
