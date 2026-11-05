@@ -317,7 +317,7 @@ public class GuiManager extends Application {
             if (chunkGraphicsHandler != null) {
                 chunkGraphicsHandler.getRegionHandler().save();
             }
-            WorldManager.getInstance().save();
+            WorldManager.getInstance().flush();
 
             Platform.exit();
             System.exit(0);

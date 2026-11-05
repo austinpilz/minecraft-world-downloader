@@ -7,6 +7,7 @@ import config.VersionReporter;
 import game.data.chunk.version.*;
 import game.data.coordinates.Coordinate3D;
 import game.data.coordinates.CoordinateDim2D;
+import game.data.dimension.Dimension;
 import game.data.WorldManager;
 import packets.DataTypeProvider;
 import se.llbit.nbt.NamedTag;
@@ -89,8 +90,10 @@ public class ChunkFactory {
             return;
         }
 
+        // the dimension may have changed by the time the parser thread gets to this chunk
+        Dimension dimension = WorldManager.getInstance().getDimension();
         Runnable r = () -> {
-            CoordinateDim2D chunkPos = new CoordinateDim2D(provider.readInt(), provider.readInt(), WorldManager.getInstance().getDimension());
+            CoordinateDim2D chunkPos = new CoordinateDim2D(provider.readInt(), provider.readInt(), dimension);
             getUnparsed(chunkPos).setProvider(provider);
 
             this.parse();

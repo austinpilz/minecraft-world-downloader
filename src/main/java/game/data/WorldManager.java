@@ -17,6 +17,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
@@ -52,8 +53,8 @@ import game.data.entity.EntityNames;
 import game.data.entity.EntityRegistry;
 import game.data.maps.MapRegistry;
 import game.data.region.McaFile;
-import game.data.region.McaFilePair;
 import game.data.region.Region;
+import game.data.region.RegionStore;
 import game.data.villagers.VillagerManager;
 import gui.GuiManager;
 import packets.DataTypeProvider;
@@ -72,7 +73,9 @@ public class WorldManager {
     private final LevelData levelData;
     private final MapRegistry mapRegistry;
     private final Map<CoordinateDim2D, Queue<Runnable>> chunkLoadCallbacks = new ConcurrentHashMap<>();
-    private Map<CoordinateDim2D, Region> regions = new ConcurrentHashMap<>();
+    private final RegionStore regionStore = new RegionStore();
+    // a save pass writes every dimension, only one runs at a time
+    private final Object saveLock = new Object();
 
     private EntityNames entityMap;
     private BlockColors blockColors;
@@ -84,7 +87,6 @@ public class WorldManager {
     private volatile boolean pausedForWorldSwitch;
     private volatile Long knownWorldSeed;
     private volatile Long pendingWorldSeed;
-    private final Set<Dimension> savingDimension;
 
     private ContainerManager containerManager;
     private CommandBlockManager commandBlockManager;
@@ -114,7 +116,6 @@ public class WorldManager {
 
         this.playerPosition = this.levelData.getPlayerPosition();
         this.dimension = this.levelData.getPlayerDimension();
-        this.savingDimension = new HashSet<>();
         this.renderDistanceExtender = new RenderDistanceExtender(this);
     }
 
@@ -175,19 +176,23 @@ public class WorldManager {
     }
 
     private void saveAndUnloadChunks() {
+        unloadDimension(this.dimension);
+    }
+
+    /**
+     * Unload every chunk in the dimension. Chunks that haven't been saved yet are no longer returned by getChunk, but
+     * stay in their region until the save that is started here has written them. The regions themselves are kept, so
+     * a region can't be read from disk again before its last chunks are written.
+     */
+    private void unloadDimension(Dimension dimension) {
         if (saveService == null) {
             return;
         }
 
-        // keep references of dimensions and regions, since the saving thread executes later and
-        // will have been overwritten by then
-        Dimension dimension = this.dimension;
-        Map<CoordinateDim2D, Region> regions = this.regions;
-        saveService.execute(() -> {
-            save(dimension, regions);
-            unloadChunks(regions);
-        });
-        this.regions = new ConcurrentHashMap<>();
+        for (Region region : regionStore.regions(dimension)) {
+            region.unloadAll();
+        }
+        saveService.execute(() -> attempt(() -> save(true)));
     }
 
     private void checkAboveSurface() {
@@ -207,10 +212,6 @@ public class WorldManager {
 
         int height = c.getChunkHeightHandler().heightAt(local.getX(), local.getZ()) - 5;
         isBelowGround = local.getY() < height;
-    }
-
-    private void unloadChunks(Map<CoordinateDim2D, Region> regions) {
-        regions.values().forEach(Region::unloadAll);
     }
 
     public double getPlayerRotation() {
@@ -303,9 +304,7 @@ public class WorldManager {
         if (!drawInGui || writeChunks) {
             CoordinateDim2D regionCoordinates = chunk.location.chunkToDimRegion();
 
-            Region r = regions.computeIfAbsent(regionCoordinates, Region::new);
-
-            r.addChunk(chunk.location, chunk, overrideExisting);
+            regionStore.withRegion(regionCoordinates, r -> r.addChunk(chunk.location, chunk, overrideExisting));
         }
 
         if (drawInGui) {
@@ -333,7 +332,8 @@ public class WorldManager {
      * @return the chunk
      */
     public Chunk getChunk(CoordinateDim2D coordinate) {
-        return regions.getOrDefault(coordinate.chunkToDimRegion(), Region.EMPTY).getChunk(coordinate);
+        Region region = regionStore.get(coordinate.chunkToDimRegion());
+        return region == null ? null : region.getChunk(coordinate);
     }
 
     public Chunk getChunk(Coordinate2D coords) {
@@ -344,13 +344,10 @@ public class WorldManager {
         chunkFactory.unloadChunk(coordinate);
 
         CoordinateDim2D regionCoordinate = coordinate.chunkToDimRegion();
-        Region r = regions.get(regionCoordinate);
+        Region r = regionStore.get(regionCoordinate);
         if (r != null) {
             r.removeChunk(coordinate);
-
-            if (r.canRemove()) {
-                regions.remove(regionCoordinate);
-            }
+            regionStore.removeIfEmpty(regionCoordinate);
         }
         this.renderDistanceExtender.notifyUnloaded(coordinate.stripDimension());
     }
@@ -392,7 +389,10 @@ public class WorldManager {
      */
     public void touchChunk(ChunkEntities c) {
         c.touch();
-        regions.get(c.getLocation().chunkToDimRegion()).touch();
+        Region region = regionStore.get(c.getLocation().chunkToDimRegion());
+        if (region != null) {
+            region.touch();
+        }
     }
 
     public DimensionRegistry getDimensionRegistry() {
@@ -434,62 +434,61 @@ public class WorldManager {
         saveService.scheduleWithFixedDelay(() -> attempt(this::save), INIT_SAVE_DELAY, SAVE_DELAY, TimeUnit.MILLISECONDS);
     }
 
-    private void save(Dimension dimension, Map<CoordinateDim2D, Region> regions) {
+    /**
+     * Write the chunks of every dimension.
+     *
+     * @param flush also write chunks while saving is paused. Used when chunks are unloaded: they were all received
+     *              before the pause, as chunks are dropped on arrival while paused.
+     */
+    private void save(boolean flush) {
         checkAboveSurface();
 
-        if (!writeChunks) {
+        if (!writeChunks || (isPaused && !flush)) {
             return;
         }
 
-        if (savingDimension.contains(dimension)) {
-            System.out.println("Dimension " + dimension + " already being saved");
-            if (saveService != null) {
-                attempt(() -> saveService.awaitTermination(30, TimeUnit.SECONDS));
+        synchronized (saveLock) {
+            // level.dat holds the player's position, which may be in a different world while paused
+            if (!isPaused) {
+                attempt(levelData::save);
+                attempt(mapRegistry::save);
             }
-            return;
-        }
-        savingDimension.add(dimension);
 
-        // save level.dat
-        attempt(levelData::save);
-        attempt(mapRegistry::save);
-
-        if (!regions.isEmpty()) {
-            // convert the values to an array first to prevent blocking any threads
-            Region[] r = regions.values().toArray(new Region[0]);
-            for (Region region : r) {
-                McaFilePair files = region.toFile(getPlayerPosition().globalToChunk());
-                if (files == null) {
-                    continue;
+            for (Dimension dimension : List.copyOf(regionStore.dimensions())) {
+                Collection<Coordinate2D> players = playerChunks(dimension);
+                for (Region region : regionStore.regions(dimension)) {
+                    attempt(() -> region.save(players));
+                    regionStore.removeIfEmpty(region.getRegionCoordinates());
                 }
-
-                write(files.getRegion());
-                write(files.getEntities());
             }
         }
-
-        // remove empty regions
-        regions.entrySet().removeIf(el -> el.getValue().isEmpty());
-
-        savingDimension.remove(dimension);
 
         // suggest GC to clear up some memory that may have been freed by saving
         System.gc();
     }
 
     /**
-     * Save the world. Will tell all regions to save their chunks.
+     * Chunk positions of the players in the given dimension, chunks far from all of them are unloaded once saved.
      */
-    public void save() {
-        save(this.dimension, this.regions);
+    private Collection<Coordinate2D> playerChunks(Dimension dimension) {
+        if (!dimension.equals(this.dimension)) {
+            return List.of();
+        }
+        return List.of(getPlayerPosition().globalToChunk());
     }
 
-    private void write(McaFile file) {
-        if (file == null || file.isEmpty()) {
-            return;
-        }
+    /**
+     * Save the world. Will tell all regions to save their chunks. Does nothing while saving is paused.
+     */
+    public void save() {
+        save(false);
+    }
 
-        attempt(file::write);
+    /**
+     * Save the world when exiting, including chunks received before saving was paused.
+     */
+    public void flush() {
+        save(true);
     }
 
     public ContainerManager getContainerManager() {
@@ -593,7 +592,7 @@ public class WorldManager {
     }
 
     public void deleteAllExisting() {
-        regions = new HashMap<>();
+        regionStore.clear(this.dimension);
         chunkFactory.clear();
 
         try {
@@ -738,12 +737,8 @@ public class WorldManager {
     }
 
     public int countActiveChunks() {
-        return countActiveChunks(regions);
-    }
-
-    private int countActiveChunks(Map<CoordinateDim2D, Region> regions) {
         int total = 0;
-        for (Region r : regions.values()) {
+        for (Region r : regionStore.allRegions()) {
             total += r.countChunks();
         }
         return total;
@@ -753,9 +748,10 @@ public class WorldManager {
         if (!Config.handleBlockChanges() || isPaused) {
             return;
         }
+        Dimension dimension = this.dimension;
         chunkFactory.runOnFactoryThread(() -> {
             Coordinate3D coords = provider.readCoordinates();
-            Chunk c = getChunk(coords.globalToChunk().addDimension(this.dimension));
+            Chunk c = getChunk(coords.globalToChunk().addDimension(dimension));
             if (c == null) {
                 return;
             }
@@ -769,8 +765,9 @@ public class WorldManager {
         if (!Config.handleBlockChanges() || isPaused) {
             return;
         }
+        Dimension dimension = this.dimension;
         chunkFactory.runOnFactoryThread(() -> {
-            Chunk c = getChunk(pos.addDimension(this.dimension));
+            Chunk c = getChunk(pos.addDimension(dimension));
             if (c == null) {
                 return;
             }
@@ -788,6 +785,7 @@ public class WorldManager {
         if (isPaused) {
             return;
         }
+        Dimension dimension = this.dimension;
         chunkFactory.runOnFactoryThread(() -> {
             int chunkX = provider.readVarInt();
             int chunkZ = provider.readVarInt();
@@ -804,7 +802,7 @@ public class WorldManager {
     }
 
     public int countActiveRegions() {
-        return this.regions.size();
+        return regionStore.countRegions();
     }
 
     public int countQueuedChunks() {
@@ -813,7 +811,7 @@ public class WorldManager {
 
 
     public int countActiveBinaryChunks() {
-        return this.regions.values().stream().mapToInt(el -> el.getFile().countChunks()).sum();
+        return regionStore.allRegions().stream().mapToInt(el -> el.getFile().countChunks()).sum();
     }
 
     public void loadLevelData() {

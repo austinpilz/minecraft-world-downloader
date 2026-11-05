@@ -7,25 +7,31 @@ import game.data.chunk.Chunk;
 import game.data.chunk.ChunkBinary;
 import game.data.dimension.Dimension;
 
+import java.io.IOException;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 /**
- * Class relating to a region (32x32 chunk area), corresponds to one MCA file.
+ * Class relating to a region (32x32 chunk area), corresponds to one MCA file. Changes to the chunks and the file are
+ * made while holding the region's lock, see {@link RegionStore}.
  */
 public class Region {
     public static final int REGION_SIZE = 32;
 
-    public static final Region EMPTY = new Region(new CoordinateDim2D(0, 0, Dimension.OVERWORLD));
     private final int UNLOAD_RANGE = 24;
     private final Map<Coordinate2D, Chunk> chunks;
     private final CoordinateDim2D regionCoordinates;
 
-    private boolean updatedSinceLastWrite;
+    private volatile boolean updatedSinceLastWrite;
+    // chunks were added to the files but writing them failed, retried on the next save
+    private boolean writePending;
     private final Set<Coordinate2D> toDelete;
+    private final ReentrantLock lock;
 
     private final McaFile file;
     private final McaFile fileEntities;
@@ -33,9 +39,11 @@ public class Region {
     /**
      * Initialise the region with the given coordinates.
      * @param regionCoordinates coordinates of the region (so global coordinates / 16 / 32)
+     * @param lock              lock guarding this region, held while the existing file is read
      */
-    public Region(CoordinateDim2D regionCoordinates) {
+    Region(CoordinateDim2D regionCoordinates, ReentrantLock lock) {
         this.regionCoordinates = regionCoordinates;
+        this.lock = lock;
         this.chunks = new ConcurrentHashMap<>();
         this.updatedSinceLastWrite = false;
         this.toDelete = ConcurrentHashMap.newKeySet();
@@ -50,7 +58,15 @@ public class Region {
      * @param chunk      the chunk to add
      */
     public void addChunk(Coordinate2D coordinate, Chunk chunk, boolean overrideExisting) {
+        lock.lock();
+        try {
+            addChunkLocked(coordinate, chunk, overrideExisting);
+        } finally {
+            lock.unlock();
+        }
+    }
 
+    private void addChunkLocked(Coordinate2D coordinate, Chunk chunk, boolean overrideExisting) {
         if (overrideExisting) {
             toDelete.remove(coordinate);
             try {
@@ -76,16 +92,24 @@ public class Region {
      * @param coordinate chunk coordinate to unload
      */
     public void removeChunk(Coordinate2D coordinate) {
-        Chunk chunk = chunks.get(coordinate);
+        Chunk chunk;
+        lock.lock();
+        try {
+            chunk = chunks.get(coordinate);
 
-        if (chunk == null) {
-            return;
-        }
+            if (chunk == null) {
+                return;
+            }
 
-        if (chunk.isSaved()) {
-            chunks.remove(coordinate);
-        } else {
-            toDelete.add(coordinate);
+            if (chunk.isSaved()) {
+                chunks.remove(coordinate);
+            } else {
+                // kept until the next save has written it
+                toDelete.add(coordinate);
+                updatedSinceLastWrite = true;
+            }
+        } finally {
+            lock.unlock();
         }
         chunk.unload();
     }
@@ -105,11 +129,39 @@ public class Region {
     }
 
     /**
+     * Write any unsaved chunks to the region file, then forget chunks that are out of range of every player in this
+     * dimension.
+     * @param playerChunks chunk position of each player in this region's dimension
+     */
+    public void save(Collection<Coordinate2D> playerChunks) throws IOException {
+        lock.lock();
+        try {
+            if (toFile(playerChunks) != null) {
+                writePending = true;
+            }
+            if (!writePending) {
+                return;
+            }
+            write(file);
+            write(fileEntities);
+            writePending = false;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private static void write(McaFile file) throws IOException {
+        if (file != null && !file.isEmpty()) {
+            file.write();
+        }
+    }
+
+    /**
      * Convert this region to an McaFile object. Will delete any chunks out of the render distance if they have already
      * been saved. Will update the Gui with the chunk that's about to be saved.
      * @return the McaFile corresponding to this region
      */
-    public McaFilePair toFile(Coordinate2D playerPos) {
+    McaFilePair toFile(Collection<Coordinate2D> playerChunks) {
         if (!updatedSinceLastWrite) {
             return null;
         }
@@ -124,7 +176,7 @@ public class Region {
 
                 // mark the chunk for deletion -- this is really only a back-up, the unload-chunk packet sent by the
                 // server is what should be used to unload chunks correctly.
-                if (!playerPos.isInRangeManhattan(coordinate, UNLOAD_RANGE)) {
+                if (playerChunks.stream().noneMatch(player -> player.isInRangeManhattan(coordinate, UNLOAD_RANGE))) {
                     toDelete.add(coordinate);
                 }
 
@@ -175,6 +227,10 @@ public class Region {
         return file;
     }
 
+    public CoordinateDim2D getRegionCoordinates() {
+        return regionCoordinates;
+    }
+
     /**
      * Mark region as having modified chunks.
      */
@@ -196,7 +252,7 @@ public class Region {
     }
 
     public boolean canRemove() {
-        return chunks.isEmpty();
+        return chunks.isEmpty() && !writePending;
     }
 
     public void forEach(Consumer<Chunk> f) {
