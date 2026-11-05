@@ -20,6 +20,11 @@ public class ObjectEntity extends Entity {
         if (ent == null) { return null; }
 
         ent.readPosition(provider);
+        boolean packedVelocity = Config.versionReporter().isAtLeast(Version.V1_21_10);
+        if (packedVelocity) {
+            // since 1.21.9 the velocity comes straight after the position
+            parsePackedVelocity(provider);
+        }
         ent.pitch = provider.readNext();
         ent.yaw = provider.readNext();
         int data;
@@ -29,7 +34,9 @@ public class ObjectEntity extends Entity {
         } else {
             data = provider.readInt();
         }
-        parseVelocity(provider);
+        if (!packedVelocity) {
+            parseVelocity(provider);
+        }
 
         // only if it's an ObjectEntity do we actually set the data bit
         if (ent instanceof ObjectEntity) {

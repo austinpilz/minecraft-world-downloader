@@ -43,7 +43,6 @@ public class PlayerReader_1_21_5 extends PlayerReader{
 					byte[] bytes = provider.readByteArray(encKeySz);
 					int pubKeySz = provider.readVarInt();
 					byte[] array = provider.readByteArray(pubKeySz);
-					System.out.println();
 				}
 			}
 			
@@ -65,9 +64,19 @@ public class PlayerReader_1_21_5 extends PlayerReader{
 			if((actions & 0x20) > 0){
 				boolean displayName = provider.readBoolean();
 				if(displayName){
-					//display name only sent if it hasDisplay
-					provider.readChat();
+					//display name only sent if it hasDisplay, as an NBT text component
+					provider.readNbtTag();
 				}
+			}
+			
+			if((actions & 0x40) > 0){
+				//list order
+				provider.readVarInt();
+			}
+			
+			if((actions & 0x80) > 0){
+				//show hat
+				provider.readBoolean();
 			}
 		}
 	}
