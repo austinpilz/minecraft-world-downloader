@@ -21,7 +21,8 @@ import util.PathUtils;
 /**
  * Tracks which chunks of the current dimension have been saved, so shapes whose chunks have all been captured can be
  * drawn as done. Chunks already in the world folder are read from the region file headers when the dimension changes,
- * chunks saved after that are reported as they are written.
+ * chunks saved after that are reported as they are written. Chunks that were received but not saved are passed on to
+ * the {@link Listener} as well, for the coverage map.
  *
  * Other threads only hand over chunks through a queue, the captured set and the per-shape counts are only touched on
  * the JavaFX thread in {@link #update}.
@@ -43,7 +44,32 @@ public class ChunkCoverage {
     private int layerRevision = -1;
     private boolean rebuild = true;
 
-    private record Batch(Dimension dimension, long[] chunks, boolean reset) { }
+    private Listener listener;
+
+    private enum Kind { RESET, SAVED, SEEN }
+
+    private record Batch(Dimension dimension, long[] chunks, Kind kind) { }
+
+    /**
+     * Notified on the JavaFX thread, in the order the chunks were reported.
+     */
+    public interface Listener {
+        void reset(Dimension dimension);
+
+        /**
+         * A chunk of the current dimension was saved, now or in an earlier run. Called once per chunk.
+         */
+        void chunkSaved(long chunk);
+
+        /**
+         * A chunk of the current dimension was received that has not been saved (yet).
+         */
+        void chunkSeen(long chunk);
+    }
+
+    public void setListener(Listener listener) {
+        this.listener = listener;
+    }
 
     public static long key(int chunkX, int chunkZ) {
         return ((long) chunkX << 32) | (chunkZ & 0xFFFFFFFFL);
@@ -72,14 +98,21 @@ public class ChunkCoverage {
      */
     void reset(Dimension dimension) {
         requestedDimension = dimension;
-        pending.add(new Batch(dimension, new long[0], true));
+        pending.add(new Batch(dimension, new long[0], Kind.RESET));
     }
 
     /**
      * Called (from any thread) when a chunk has been saved.
      */
     public void chunkSaved(Dimension dimension, Coordinate2D chunk) {
-        pending.add(new Batch(dimension, new long[]{key(chunk.getX(), chunk.getZ())}, false));
+        pending.add(new Batch(dimension, new long[]{key(chunk.getX(), chunk.getZ())}, Kind.SAVED));
+    }
+
+    /**
+     * Called (from any thread) when a chunk has been received from the server.
+     */
+    public void chunkSeen(Dimension dimension, Coordinate2D chunk) {
+        pending.add(new Batch(dimension, new long[]{key(chunk.getX(), chunk.getZ())}, Kind.SEEN));
     }
 
     private void readSavedChunks(Dimension dimension) {
@@ -99,7 +132,7 @@ public class ChunkCoverage {
                 Coordinate2D region = new Coordinate2D(Integer.parseInt(parts[1]), Integer.parseInt(parts[2])).offsetRegionToActual();
                 long[] chunks = chunksInHeader(input.readNBytes(REGION_HEADER_SIZE), region.getX(), region.getZ());
                 if (chunks.length > 0) {
-                    pending.add(new Batch(dimension, chunks, false));
+                    pending.add(new Batch(dimension, chunks, Kind.SAVED));
                 }
             } catch (IOException | NumberFormatException ex) {
                 // unreadable files are skipped, their chunks just show as not captured
@@ -132,18 +165,33 @@ public class ChunkCoverage {
     public void update(List<OverlayLayer> layers, int revision) {
         Batch batch;
         while ((batch = pending.poll()) != null) {
-            if (batch.reset) {
+            if (batch.kind == Kind.RESET) {
                 dimension = batch.dimension;
                 captured.clear();
                 rebuild = true;
+                if (listener != null) {
+                    listener.reset(dimension);
+                }
                 continue;
             }
             if (!batch.dimension.equals(dimension)) {
                 continue;
             }
             for (long chunk : batch.chunks) {
-                if (captured.add(chunk) && !rebuild) {
+                if (batch.kind == Kind.SEEN) {
+                    if (listener != null && !captured.contains(chunk)) {
+                        listener.chunkSeen(chunk);
+                    }
+                    continue;
+                }
+                if (!captured.add(chunk)) {
+                    continue;
+                }
+                if (!rebuild) {
                     countChunk(chunk);
+                }
+                if (listener != null) {
+                    listener.chunkSaved(chunk);
                 }
             }
         }

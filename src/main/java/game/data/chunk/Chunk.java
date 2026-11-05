@@ -11,6 +11,7 @@ import game.data.coordinates.Coordinate3D;
 import game.data.coordinates.CoordinateDim2D;
 import game.data.dimension.Dimension;
 import game.protocol.Protocol;
+import gui.GuiManager;
 import java.util.function.BiConsumer;
 import packets.DataTypeProvider;
 import packets.builder.PacketBuilder;
@@ -102,7 +103,7 @@ public abstract class Chunk extends ChunkEntities {
 
     public void setSaved(boolean saved) {
         if (saved && !this.saved) {
-            getChunkImageFactory().markSaved();
+            GuiManager.markChunkSaved(location);
         }
         this.saved = saved;
     }
@@ -551,6 +552,10 @@ public abstract class Chunk extends ChunkEntities {
             toUpdate.add(blockPos);
 
             updateBlock(blockPos, blockId, true);
+        }
+        // without an image factory (coverage map, or no GUI) there are no heights to keep up to date
+        if (this.imageFactory == null) {
+            return;
         }
         boolean wasChanged = this.chunkHeightHandler.recomputeHeights(toUpdate);
         if (wasChanged) {

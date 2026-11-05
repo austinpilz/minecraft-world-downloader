@@ -62,6 +62,12 @@
                     <AnchorPane GridPane.columnIndex="4">
                         <IntField fx:id="extendedDistanceText" prefWidth="40" AnchorPane.leftAnchor="10" />
                     </AnchorPane>
+                    <CheckBox fx:id="coverageMap" prefHeight="25.0" prefWidth="93.0" GridPane.columnIndex="1" GridPane.rowIndex="1" />
+                    <Label text="Coverage map only" GridPane.rowIndex="1">
+                        <tooltip>
+                            <QuickTooltip text="Only show which chunks have been saved (green) or received (grey) instead of rendering them. Uses much less CPU and memory with several bots." />
+                        </tooltip>
+                    </Label>
                     <CheckBox fx:id="markUnsaved" prefHeight="25.0" prefWidth="93.0" GridPane.columnIndex="1" GridPane.rowIndex="2" />
                     <Label text="Mark unsaved chunks" GridPane.rowIndex="2">
                         <tooltip>

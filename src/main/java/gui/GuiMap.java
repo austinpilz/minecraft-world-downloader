@@ -10,6 +10,7 @@ import game.data.WorldManager;
 import game.data.chunk.Chunk;
 import game.data.dimension.Dimension;
 import game.data.entity.PlayerEntity;
+import gui.images.CoverageImageHandler;
 import gui.images.RegionImageHandler;
 import gui.markers.MapMarkerHandler;
 import gui.markers.PlayerMarker;
@@ -64,6 +65,7 @@ public class GuiMap {
     private int gridSize;
 
     private RegionImageHandler regionHandler;
+    private CoverageImageHandler coverageHandler;
     private MapMarkerHandler markerHandler;
     private OverlayManager overlayManager;
     private OverlayRenderer overlayRenderer;
@@ -95,8 +97,10 @@ public class GuiMap {
     void initialize() {
         this.zoomBehaviour = Config.smoothZooming() ? new SmoothZooming() : new SnapZooming();
         this.regionHandler = new RegionImageHandler();
+        this.coverageHandler = new CoverageImageHandler();
         this.markerHandler = new MapMarkerHandler();
         this.overlayManager = new OverlayManager();
+        this.overlayManager.getCoverage().setListener(coverageHandler);
         this.overlayManager.loadFromConfig();
         this.overlayRenderer = new OverlayRenderer(overlayManager);
         this.bounds = new Bounds();
@@ -310,18 +314,37 @@ public class GuiMap {
             }
         }
 
-        ChunkImageFactory imageFactory = chunk.getChunkImageFactory();
-        imageFactory.onComplete((imageMap, isSaved) -> {
-            regionHandler.drawChunk(coord, imageMap, isSaved);
-            if (isSaved) {
-                overlayManager.getCoverage().chunkSaved(coord.getDimension(), coord);
-            }
-        });
-        imageFactory.onSaved(() -> {
-            regionHandler.markChunkSaved(coord);
+        if (chunk.isSaved()) {
             overlayManager.getCoverage().chunkSaved(coord.getDimension(), coord);
-        });
+        } else {
+            overlayManager.getCoverage().chunkSeen(coord.getDimension(), coord);
+        }
+
+        // the coverage map doesn't need chunk images, skipping them is what makes it cheap
+        if (Config.coverageMap()) {
+            return;
+        }
+
+        ChunkImageFactory imageFactory = chunk.getChunkImageFactory();
+        imageFactory.onComplete((imageMap, isSaved) -> regionHandler.drawChunk(coord, imageMap, isSaved));
         imageFactory.requestImage();
+    }
+
+    void markChunkSaved(CoordinateDim2D coord) {
+        regionHandler.markChunkSaved(coord);
+        overlayManager.getCoverage().chunkSaved(coord.getDimension(), coord);
+    }
+
+    /**
+     * Switch between the coverage map and the rendered map. Chunks that were loaded while the coverage map was shown
+     * are only rendered once they are sent again.
+     */
+    public void setCoverageMode(boolean enabled) {
+        if (Config.coverageMap() == enabled) {
+            return;
+        }
+        Config.setCoverageMap(enabled);
+        Config.save();
     }
 
     /**
@@ -347,7 +370,13 @@ public class GuiMap {
         graphics.setFill(BACKGROUND_COLOR);
         graphics.fillRect(0, 0, width.get(), height.get());
 
-        regionHandler.drawAll(bounds, targetBlocksPerPixel, this::drawRegion);
+        if (Config.coverageMap()) {
+            coverageHandler.drawAll(bounds, this::drawRegion);
+        } else {
+            // also covers the coverage map being turned off from the settings window
+            regionHandler.loadIfNeeded();
+            regionHandler.drawAll(bounds, targetBlocksPerPixel, this::drawRegion);
+        }
 
         drawDebugHighlight(graphics);
     }
@@ -499,6 +528,9 @@ public class GuiMap {
     }
 
     public String imageStats() {
+        if (Config.coverageMap()) {
+            return coverageHandler.stats();
+        }
         return regionHandler.stats();
     }
 

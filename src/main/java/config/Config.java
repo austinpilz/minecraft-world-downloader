@@ -507,6 +507,10 @@ public class Config {
             usage = "Enable automatically switching to cave render mode when underground.")
     public boolean enableCaveRenderMode = false;
 
+    @Option(name = "--coverage-map",
+            usage = "Only show which chunks have been saved on the map, without rendering them. Much cheaper when running several bots.")
+    public boolean coverageMap = false;
+
     // set from the settings GUI, or by SocksProxyHandler when --socks-proxy is given
     public boolean enableSocksProxy = false;
 
@@ -598,6 +602,14 @@ public class Config {
     }
     public static boolean enableCaveRenderMode() {
         return instance.enableCaveRenderMode;
+    }
+
+    public static boolean coverageMap() {
+        return instance.coverageMap;
+    }
+
+    public static void setCoverageMap(boolean coverageMap) {
+        instance.coverageMap = coverageMap;
     }
 
     public static List<OverlayEntry> getOverlays() {

@@ -41,6 +41,8 @@ public class RegionImageHandler {
     private Map<Coordinate2D, RegionImages> regions;
     private Dimension activeDimension;
     private boolean isSaving = false;
+    // the image cache isn't read while the coverage map is shown, it's read once the rendered map is shown again
+    private volatile boolean needsLoad = false;
 
     // draws are cheap, in-memory pixel writes and need to keep up with incoming chunks, so they get
     // their own executor. Saving/resampling involves disk I/O and PNG encode/decode and can take a
@@ -214,7 +216,18 @@ public class RegionImageHandler {
         }
 
         this.activeDimension = dimension;
-        loadFromFile();
+        if (Config.coverageMap()) {
+            needsLoad = true;
+        } else {
+            loadFromFile();
+        }
+    }
+
+    public void loadIfNeeded() {
+        if (needsLoad && activeDimension != null) {
+            needsLoad = false;
+            loadFromFile();
+        }
     }
 
     static Path dimensionPath(Dimension dim) {

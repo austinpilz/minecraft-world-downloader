@@ -348,6 +348,15 @@ public class GuiManager extends Application {
         }
     }
 
+    /**
+     * Called (from any thread) when a chunk has been written to its region file.
+     */
+    public static void markChunkSaved(CoordinateDim2D coord) {
+        if (chunkGraphicsHandler != null) {
+            chunkGraphicsHandler.markChunkSaved(coord);
+        }
+    }
+
     public static void clearChunks() {
         if (chunkGraphicsHandler != null) {
             chunkGraphicsHandler.clearChunks();

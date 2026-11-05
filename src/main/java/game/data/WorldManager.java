@@ -201,7 +201,7 @@ public class WorldManager {
         }
 
         Chunk c = getChunk(discrete.globalToChunk());
-        if (c == null) {
+        if (c == null || c.getChunkHeightHandler() == null) {
             return;
         }
 

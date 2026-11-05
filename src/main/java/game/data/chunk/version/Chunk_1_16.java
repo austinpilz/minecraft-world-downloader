@@ -63,7 +63,9 @@ public class Chunk_1_16 extends Chunk_1_15 {
 
             updateBlock(blockPos, blockId, true);
         }
-        this.getChunkHeightHandler().recomputeHeights(toUpdate);
+        if (this.getChunkHeightHandler() != null) {
+            this.getChunkHeightHandler().recomputeHeights(toUpdate);
+        }
     }
 
     @Override

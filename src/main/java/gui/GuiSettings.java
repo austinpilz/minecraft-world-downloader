@@ -76,6 +76,7 @@ public class GuiSettings {
     public ProxyTabController proxyController;
     public CheckBox enableDrawExtendedChunks;
     public CheckBox enableCaveRenderMode;
+    public CheckBox coverageMap;
     public Label authResult;
 
 
@@ -125,6 +126,7 @@ public class GuiSettings {
         renderOtherPlayers.setSelected(config.renderOtherPlayers);
         enableInfoMessages.setSelected(!config.disableInfoMessages);
         enableCaveRenderMode.setSelected(config.enableCaveRenderMode);
+        coverageMap.setSelected(config.coverageMap);
         enableDrawExtendedChunks.setSelected(config.drawExtendedChunks);
 
         // realms tab
@@ -328,6 +330,7 @@ public class GuiSettings {
         config.renderOtherPlayers = renderOtherPlayers.isSelected();
         config.disableInfoMessages = !enableInfoMessages.isSelected();
         config.enableCaveRenderMode = enableCaveRenderMode.isSelected();
+        config.coverageMap = coverageMap.isSelected();
         config.drawExtendedChunks = enableDrawExtendedChunks.isSelected();
 
         // proxy tab
