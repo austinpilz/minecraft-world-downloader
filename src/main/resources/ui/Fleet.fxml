@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane prefHeight="420.0" prefWidth="1060.0" stylesheets="/ui/dark.css" xmlns="http://javafx.com/javafx" xmlns:fx="http://javafx.com/fxml/1" fx:controller="gui.fleet.FleetPanel">
+    <top>
+        <HBox spacing="8.0">
+            <padding><Insets bottom="6.0" left="8.0" right="8.0" top="8.0" /></padding>
+            <Button fx:id="pauseAllButton" onAction="#togglePauseAll" />
+            <Button fx:id="acceptingButton" onAction="#toggleAccepting" />
+            <Button fx:id="kickAllButton" text="Kick all" onAction="#kickAll" />
+            <Pane HBox.hgrow="ALWAYS" />
+            <Label fx:id="summaryLabel" />
+        </HBox>
+    </top>
+    <center>
+        <TableView fx:id="table">
+            <placeholder><Label text="No bots are set up or online." /></placeholder>
+        </TableView>
+    </center>
+    <bottom>
+        <VBox spacing="4.0">
+        <padding><Insets bottom="8.0" left="8.0" right="8.0" top="6.0" /></padding>
+        <Label fx:id="reasonLabel" wrapText="true" visible="false" managed="false" />
+        <HBox alignment="CENTER_LEFT" spacing="8.0">
+            <Button fx:id="focusButton" text="Follow on map" onAction="#focus" />
+            <Button fx:id="savingButton" onAction="#toggleSaving" />
+            <Button fx:id="resumeButton" text="Resume" onAction="#resume">
+                <tooltip><Tooltip text="Save what the bot receives again. Only do this when it is still in the same world" /></tooltip>
+            </Button>
+            <Button fx:id="kickButton" text="Kick" onAction="#kick" />
+            <Separator orientation="VERTICAL" />
+            <Label text="Exit" />
+            <ComboBox fx:id="exitChoice" prefWidth="220.0" />
+            <Button fx:id="exitButton" text="Set exit" onAction="#setExit">
+                <tooltip><Tooltip text="The bot uses the new exit the next time it connects" /></tooltip>
+            </Button>
+        </HBox>
+        </VBox>
+    </bottom>
+</BorderPane>

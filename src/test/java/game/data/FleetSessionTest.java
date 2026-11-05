@@ -149,6 +149,67 @@ class FleetSessionTest {
     }
 
     @Test
+    void resumingABotInAnotherWorldAcceptsThatWorldForIt() {
+        as(a, () -> worldManager.checkWorldSeed(1234));
+        as(b, () -> worldManager.checkWorldSeed(9999));
+        b.resume();
+
+        // the server sends the seed again on every respawn, that mustn't stop the bot again
+        as(b, () -> worldManager.checkWorldSeed(9999));
+        assertThat(b.isQuarantined()).isFalse();
+
+        // but another world still does, as it does for the other bots
+        as(b, () -> worldManager.checkWorldSeed(5555));
+        assertThat(b.isQuarantined()).isTrue();
+        as(a, () -> worldManager.checkWorldSeed(9999));
+        assertThat(a.isQuarantined()).isTrue();
+    }
+
+    @Test
+    void stateShowsWhyABotIsntSaving() {
+        assertThat(a.getState()).isEqualTo(PlayerSession.State.CONNECTING);
+        as(a, () -> worldManager.setDimension(Dimension.OVERWORLD));
+        assertThat(a.getState()).isEqualTo(PlayerSession.State.ONLINE);
+
+        a.setSaving(false);
+        assertThat(a.getState()).isEqualTo(PlayerSession.State.SAVING_OFF);
+        as(a, () -> assertThat(worldManager.acceptsData()).isFalse());
+
+        as(a, worldManager::onLogin);
+        as(a, worldManager::onLogin);
+        assertThat(a.getState()).isEqualTo(PlayerSession.State.QUARANTINED);
+    }
+
+    @Test
+    void chunkTotalsAreKeptPerBotOverReconnects() {
+        as(a, () -> worldManager.chunkReceived(new CoordinateDim2D(1, 1, Dimension.OVERWORLD)));
+        as(a, () -> worldManager.chunkReceived(new CoordinateDim2D(1, 2, Dimension.OVERWORLD)));
+        worldManager.endFleetSession(a);
+
+        PlayerSession again = PlayerSession.fleet("bota");
+        worldManager.addFleetSession(again);
+        as(again, () -> worldManager.chunkReceived(new CoordinateDim2D(1, 3, Dimension.OVERWORLD)));
+
+        assertThat(again.getChunksReceived()).isEqualTo(1);
+        assertThat(again.getChunksPerMinute()).isEqualTo(1);
+        assertThat(worldManager.getTotalChunks("BotA")).isEqualTo(3);
+        assertThat(worldManager.getTotalChunks("BotB")).isZero();
+    }
+
+    @Test
+    void kickAllKicksEveryBot() {
+        Runnable kickA = mock(Runnable.class);
+        Runnable kickB = mock(Runnable.class);
+        a.setKick(kickA);
+        b.setKick(kickB);
+
+        worldManager.kickAllBots();
+
+        verify(kickA).run();
+        verify(kickB).run();
+    }
+
+    @Test
     void secondLoginMeansAnotherServer() {
         as(a, worldManager::onLogin);
         assertThat(a.isQuarantined()).isFalse();

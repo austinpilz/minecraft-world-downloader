@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 import proxy.SocksProxyDetails;
 import proxy.accounts.AccountStore.Account;
 import proxy.accounts.AccountStore.BotProfile;
@@ -43,12 +44,18 @@ public final class AccountCommands {
         System.out.println("Open " + login.getVerificationUri() + " and enter the code " + login.getUserCode()
             + " to log in the account to add. Waiting...");
 
-        MicrosoftAuthHandler auth = login.await(() -> false);
-        AuthDetails details = auth.freshAuthDetails();
+        Account account = storeLogin(store, login.await(() -> false));
+        System.out.println("Added account " + account.getName() + ".");
+        return account;
+    }
 
+    /**
+     * Add the account a device code login gave, or update its tokens if it was there already.
+     */
+    public static Account storeLogin(AccountStore store, MicrosoftAuthHandler auth) {
+        AuthDetails details = auth.freshAuthDetails();
         Account account = store.addAccount(new Account(details.getUsername(), details.getUuid(), auth));
         store.save();
-        System.out.println("Added account " + account.getName() + ".");
         return account;
     }
 
@@ -108,11 +115,17 @@ public final class AccountCommands {
      * @return true if every entry works and has an exit IP of its own
      */
     public static boolean testPool(AccountStore store, ExitChecker checker) {
-        SocksPool.ParseResult pool = store.getPool().parse();
-        pool.errors().forEach(e -> System.err.println("SOCKS pool: " + e));
+        return testPool(store.getPool().parse(), checker, System.out::println);
+    }
+
+    /**
+     * Test the pool's entries, writing a line for each one to the output.
+     */
+    public static boolean testPool(SocksPool.ParseResult pool, ExitChecker checker, Consumer<String> out) {
+        pool.errors().forEach(e -> out.accept("ERROR " + e));
 
         if (pool.entries().isEmpty()) {
-            System.out.println("The SOCKS pool is empty.");
+            out.accept("The SOCKS pool is empty.");
             return false;
         }
 
@@ -130,16 +143,16 @@ public final class AccountCommands {
 
             if (!result.ok()) {
                 allGood = false;
-                System.out.println("FAIL  " + entry.key() + "  " + result.error());
+                out.accept("FAIL  " + entry.key() + "  " + result.error());
                 continue;
             }
 
             String other = ipOwners.putIfAbsent(result.ip(), entry.key());
             if (other != null) {
                 allGood = false;
-                System.out.println("DUP   " + entry.key() + "  " + result.ip() + " (same exit IP as " + other + ")");
+                out.accept("DUP   " + entry.key() + "  " + result.ip() + " (same exit IP as " + other + ")");
             } else {
-                System.out.println("OK    " + entry.key() + "  " + result.ip() + "  " + result.latencyMs() + " ms");
+                out.accept("OK    " + entry.key() + "  " + result.ip() + "  " + result.latencyMs() + " ms");
             }
         }
         return allGood;

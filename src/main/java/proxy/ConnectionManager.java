@@ -230,6 +230,10 @@ public class ConnectionManager {
             refuseClient(pendingRefusal);
             return;
         }
+        if (fleet && !WorldManager.getInstance().isAcceptingBots()) {
+            refuseClient("The fleet isn't taking new bots right now.");
+            return;
+        }
 
         BotLogin.Session session;
         try {
@@ -267,6 +271,8 @@ public class ConnectionManager {
         PlayerSession started = PlayerSession.fleet(login.botName());
         started.setInjector(encryptionManager.getPacketInjector());
         started.setExitIp(login.exitIp());
+        started.setExit(login.exit() == null ? "direct" : login.exit().getFriendlyHost());
+        started.setAccountName(login.account().getUsername());
         started.setKick(() -> serverConnector.disconnectClient());
         PlayerSession.bind(started);
 

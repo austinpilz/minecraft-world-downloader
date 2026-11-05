@@ -133,6 +133,9 @@ public class RightClickMenu extends ContextMenu {
 
         menu.add(new Menu("Render mode", null, renderModes.toArray(new MenuItem[0])));
         menu.add(overlayMenu);
+        if (Config.isFleet()) {
+            menu.add(construct("Fleet panel", e -> GuiManager.loadWindowFleet()));
+        }
         menu.add(construct("Settings", e -> GuiManager.loadWindowSettings()));
 
         menu.add(construct("Save & Exit", e -> {

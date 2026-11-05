@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import gui.components.*?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox spacing="6.0" prefWidth="578.0" xmlns="http://javafx.com/javafx" xmlns:fx="http://javafx.com/fxml/1" fx:controller="gui.AccountsTabController">
+    <padding><Insets bottom="8.0" left="14.0" right="14.0" top="8.0" /></padding>
+
+    <HBox spacing="8.0" alignment="CENTER_LEFT">
+        <CheckBox fx:id="proxyAccounts" text="The proxy logs bots in with these accounts">
+            <tooltip>
+                <QuickTooltip text="Clients connect offline with a bot's name (e.g. Meteor's Cracked account), and the proxy joins the server as that bot's Microsoft account through the bot's exit. Always on with --fleet" />
+            </tooltip>
+        </CheckBox>
+    </HBox>
+
+    <Label style="-fx-font-weight: bold;" text="Microsoft accounts" />
+    <HBox spacing="8.0">
+        <ListView fx:id="accountList" prefHeight="90.0" HBox.hgrow="ALWAYS" />
+        <VBox spacing="6.0">
+            <Button fx:id="addAccountButton" maxWidth="Infinity" text="Add account" onAction="#addAccount" />
+            <Button fx:id="checkAccountButton" maxWidth="Infinity" text="Check login" onAction="#checkAccount" />
+            <Button fx:id="removeAccountButton" maxWidth="Infinity" text="Remove" onAction="#removeAccount" />
+        </VBox>
+    </HBox>
+    <HBox fx:id="codeBox" spacing="8.0" alignment="CENTER_LEFT" visible="false" managed="false">
+        <Hyperlink fx:id="codeLink" onAction="#openCodeLink" />
+        <TextField fx:id="codeField" editable="false" prefWidth="120.0" />
+        <Button text="Cancel" onAction="#cancelAddAccount" />
+    </HBox>
+    <Label fx:id="accountStatus" wrapText="true" />
+
+    <Label style="-fx-font-weight: bold;" text="Bots" />
+    <ListView fx:id="botList" prefHeight="100.0" />
+    <GridPane hgap="8.0" vgap="4.0">
+        <columnConstraints>
+            <ColumnConstraints prefWidth="170.0" />
+            <ColumnConstraints prefWidth="170.0" />
+            <ColumnConstraints prefWidth="200.0" />
+        </columnConstraints>
+        <Label text="Client name">
+            <tooltip>
+                <QuickTooltip text="The name the client connects with, e.g. the name of its Cracked account in Meteor" />
+            </tooltip>
+        </Label>
+        <Label text="Account" GridPane.columnIndex="1" />
+        <Label text="Exit" GridPane.columnIndex="2">
+            <tooltip>
+                <QuickTooltip text="'auto' picks a free entry of the SOCKS pool the first time the bot connects and keeps it. Or pick an entry, or type host:port" />
+            </tooltip>
+        </Label>
+        <TextField fx:id="botName" GridPane.rowIndex="1" />
+        <ComboBox fx:id="botAccount" maxWidth="Infinity" GridPane.columnIndex="1" GridPane.rowIndex="1" />
+        <ComboBox fx:id="botExit" editable="true" maxWidth="Infinity" GridPane.columnIndex="2" GridPane.rowIndex="1" />
+    </GridPane>
+    <HBox spacing="6.0">
+        <Button fx:id="saveBotButton" text="Save bot" onAction="#saveBot" />
+        <Button fx:id="removeBotButton" text="Remove bot" onAction="#removeBot" />
+    </HBox>
+    <Label fx:id="botStatus" wrapText="true" />
+</VBox>

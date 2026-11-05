@@ -74,6 +74,10 @@ public class GuiSettings {
     public RealmsTabController realmsController;
     public AuthTabController authController;
     public ProxyTabController proxyController;
+    public Tab accountsTab;
+    public AccountsTabController accountsController;
+    public Tab poolTab;
+    public SocksPoolTabController socksPoolController;
     public CheckBox enableDrawExtendedChunks;
     public CheckBox enableCaveRenderMode;
     public CheckBox coverageMap;
@@ -104,7 +108,9 @@ public class GuiSettings {
         heights = Map.of(
             generalTab, 360,
             realmsTab, 320,
-            proxyTab, 330
+            proxyTab, 330,
+            accountsTab, 560,
+            poolTab, 500
         );
 
         // connection tab
@@ -141,14 +147,24 @@ public class GuiSettings {
                 if (newVal == authTab) {
                     authController.opened(this);
                 }
-
-                if (heights.containsKey(newVal)) {
-                    GuiManager.getStage().setHeight(heights.get(newVal));
-                } else {
-                    resetHeight();
-                }
             });
         }
+
+        // the accounts and the pool can be changed while running, so these tabs work either way
+        tabPane.getSelectionModel().selectedItemProperty().addListener((e, oldVal, newVal) -> {
+            if (oldVal == poolTab) {
+                socksPoolController.save();
+            }
+            if (newVal == accountsTab) {
+                accountsController.opened();
+            }
+
+            if (heights.containsKey(newVal)) {
+                GuiManager.getStage().setHeight(heights.get(newVal));
+            } else {
+                resetHeight();
+            }
+        });
         disableWhenRunning(Arrays.asList(server, portLocal, centerX, centerZ, worldOutputDir));
 
         GuiManager.bindTooltip(portVerifyLabel, new Tooltip("Is the downloader already running?"));
@@ -335,6 +351,10 @@ public class GuiSettings {
 
         // proxy tab
         proxyController.save(config);
+
+        // accounts and pool tabs
+        accountsController.save(config);
+        socksPoolController.save();
 
         Config.save();
     }

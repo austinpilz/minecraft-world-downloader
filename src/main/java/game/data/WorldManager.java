@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
@@ -29,6 +30,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 
 import java.util.function.Consumer;
@@ -103,6 +105,9 @@ public class WorldManager {
     private volatile boolean fleet;
     private final List<PlayerSession> fleetSessions = new CopyOnWriteArrayList<>();
     private volatile PlayerSession focus;
+    private volatile boolean acceptingBots = true;
+    // chunks each bot brought in since the proxy started, over all its connections, by lower case bot name
+    private final Map<String, AtomicLong> chunksByBot = new ConcurrentHashMap<>();
     private final ChunkFactory chunkFactory;
 
     private ScheduledExecutorService saveService;
@@ -206,6 +211,29 @@ public class WorldManager {
     }
 
     /**
+     * Whether new bots may log in. Turning this off leaves the bots that are online alone.
+     */
+    public boolean isAcceptingBots() {
+        return acceptingBots;
+    }
+
+    public void setAcceptingBots(boolean acceptingBots) {
+        this.acceptingBots = acceptingBots;
+    }
+
+    public void kickAllBots() {
+        fleetSessions.forEach(PlayerSession::kick);
+    }
+
+    /**
+     * The chunks a bot brought in since the proxy started, over all the times it connected.
+     */
+    public long getTotalChunks(String botName) {
+        AtomicLong count = chunksByBot.get(botName.toLowerCase(Locale.ROOT));
+        return count == null ? 0 : count.get();
+    }
+
+    /**
      * A bot of the fleet logged in. Its packets were already handled with the session bound, this makes it count
      * for unloading chunks and lets the GUI follow it.
      */
@@ -275,6 +303,7 @@ public class WorldManager {
         PlayerSession session = PlayerSession.bound();
         if (session != null && session.isFleet()) {
             session.chunkLoaded(coordinate);
+            chunksByBot.computeIfAbsent(session.getName().toLowerCase(Locale.ROOT), k -> new AtomicLong()).incrementAndGet();
         }
     }
 
@@ -704,8 +733,8 @@ public class WorldManager {
         // in fleet mode only the bot that was moved stops saving, the others are still in the right world
         PlayerSession session = session();
         if (session.isFleet()) {
-            if (knownWorldSeed != seed) {
-                quarantine(session, "it is in a different world (seed " + seed + " instead of " + knownWorldSeed + ")");
+            if (knownWorldSeed != seed && !session.acceptsSeed(seed)) {
+                quarantine(session, "it is in a different world (seed " + seed + " instead of " + knownWorldSeed + ")", seed);
             }
             return;
         }
@@ -748,7 +777,11 @@ public class WorldManager {
      * Stop saving what a bot of the fleet receives, until the user resumes it.
      */
     public void quarantine(PlayerSession session, String reason) {
-        if (session.quarantine(reason)) {
+        quarantine(session, reason, null);
+    }
+
+    private void quarantine(PlayerSession session, String reason, Long seed) {
+        if (session.quarantine(reason, seed)) {
             System.out.println("Bot " + session + " stopped saving: " + reason + ". Resume it if this is still the same world, or kick it.");
         }
     }

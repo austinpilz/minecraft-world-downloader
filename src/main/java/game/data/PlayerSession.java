@@ -36,14 +36,30 @@ public class PlayerSession {
     private volatile String quarantineReason;
     private volatile boolean loggedIn;
     private volatile String exitIp;
+    private volatile String exit;
+    private volatile String accountName;
     private volatile Runnable kick;
 
     private final long connectedAt = System.currentTimeMillis();
     private volatile long lastPacketAt = connectedAt;
     private final AtomicLong chunksReceived = new AtomicLong();
+    private final ChunkRate chunkRate = new ChunkRate();
+
+    /**
+     * What the fleet panel shows a bot as doing.
+     */
+    public enum State {
+        // logged in, but the server hasn't said where the bot is yet
+        CONNECTING,
+        ONLINE,
+        SAVING_OFF,
+        QUARANTINED
+    }
 
     // chunks the server has sent this player and not yet told it to forget
     private final Set<CoordinateDim2D> loadedChunks = ConcurrentHashMap.newKeySet();
+    private volatile Long quarantineSeed;
+    private volatile Long acceptedSeed;
 
     private ContainerManager containerManager;
     private CommandBlockManager commandBlockManager;
@@ -117,15 +133,36 @@ public class PlayerSession {
      * @return false if it was quarantined already
      */
     public boolean quarantine(String reason) {
+        return quarantine(reason, null);
+    }
+
+    /**
+     * Quarantine because the bot is in a world with another seed. Resuming it accepts that seed for this bot, so it
+     * isn't stopped again the next time the server sends it.
+     */
+    public synchronized boolean quarantine(String reason, Long seed) {
         if (quarantineReason != null) {
             return false;
         }
         quarantineReason = reason;
+        quarantineSeed = seed;
         return true;
     }
 
-    public void resume() {
+    public synchronized void resume() {
+        if (quarantineSeed != null) {
+            acceptedSeed = quarantineSeed;
+        }
         quarantineReason = null;
+        quarantineSeed = null;
+    }
+
+    /**
+     * Whether the user resumed this bot after it was quarantined for being in the world with this seed.
+     */
+    public boolean acceptsSeed(long seed) {
+        Long accepted = acceptedSeed;
+        return accepted != null && accepted == seed;
     }
 
     public String getQuarantineReason() {
@@ -166,8 +203,26 @@ public class PlayerSession {
         return fleet;
     }
 
+    public State getState() {
+        if (quarantineReason != null) {
+            return State.QUARANTINED;
+        }
+        if (!saving) {
+            return State.SAVING_OFF;
+        }
+        return dimension == null ? State.CONNECTING : State.ONLINE;
+    }
+
     CoordinateDouble3D getPosition() {
         return position;
+    }
+
+    public double getX() {
+        return position.getX();
+    }
+
+    public double getZ() {
+        return position.getZ();
     }
 
     public Coordinate2D getChunkPosition() {
@@ -228,6 +283,28 @@ public class PlayerSession {
         this.exitIp = exitIp;
     }
 
+    /**
+     * The SOCKS exit the bot goes through, as host:port, or "direct".
+     */
+    public String getExit() {
+        return exit;
+    }
+
+    public void setExit(String exit) {
+        this.exit = exit;
+    }
+
+    /**
+     * The name of the Microsoft account the bot is logged in as on the server.
+     */
+    public String getAccountName() {
+        return accountName;
+    }
+
+    public void setAccountName(String accountName) {
+        this.accountName = accountName;
+    }
+
     public long getConnectedAt() {
         return connectedAt;
     }
@@ -240,8 +317,15 @@ public class PlayerSession {
         lastPacketAt = System.currentTimeMillis();
     }
 
+    /**
+     * The chunks this bot brought in since it connected. Chunks it received while it wasn't saving don't count.
+     */
     public long getChunksReceived() {
         return chunksReceived.get();
+    }
+
+    public long getChunksPerMinute() {
+        return chunkRate.perMinute();
     }
 
     Set<CoordinateDim2D> loadedChunks() {
@@ -251,6 +335,7 @@ public class PlayerSession {
     void chunkLoaded(CoordinateDim2D coordinate) {
         loadedChunks.add(coordinate);
         chunksReceived.incrementAndGet();
+        chunkRate.add();
     }
 
     synchronized ContainerManager getContainerManager() {
