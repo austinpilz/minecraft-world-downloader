@@ -1,9 +1,9 @@
 package proxy;
 
-import java.net.Authenticator;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.PasswordAuthentication;
 import java.net.Proxy;
+import java.net.UnknownHostException;
 
 /**
  * Details of the SOCKS5 proxy that the connection to the remote server is routed through, if the user
@@ -18,11 +18,27 @@ public class SocksProxyDetails {
     private final String username;
     private final String password;
 
+    // set once the host has been looked up, see pin()
+    private final InetAddress pinnedAddress;
+
     public SocksProxyDetails(String host, int port, String username, String password) {
+        this(host, port, username, password, null);
+    }
+
+    private SocksProxyDetails(String host, int port, String username, String password, InetAddress pinnedAddress) {
         this.host = host;
         this.port = port > 0 ? port : DEFAULT_PORT;
         this.username = username == null ? "" : username;
         this.password = password == null ? "" : password;
+        this.pinnedAddress = pinnedAddress;
+    }
+
+    public String getHost() {
+        return host;
+    }
+
+    public int getPort() {
+        return port;
     }
 
     public String getFriendlyHost() {
@@ -33,33 +49,46 @@ public class SocksProxyDetails {
         return !username.isEmpty();
     }
 
-    public Proxy toProxy() {
-        return new Proxy(Proxy.Type.SOCKS, new InetSocketAddress(host, port));
+    /**
+     * Look the proxy's host up once and keep using that IP. A bot's session join and its game connection then
+     * always go out through the same server, even if the host name resolves to several.
+     */
+    public SocksProxyDetails pin() throws UnknownHostException {
+        InetAddress resolved = InetAddress.getByName(host);
+
+        // an address without a host name, otherwise the JDK looks the name up again when it connects
+        InetAddress ipOnly = InetAddress.getByAddress(resolved.getAddress());
+
+        SocksProxyDetails pinned = new SocksProxyDetails(host, port, username, password, ipOnly);
+        pinned.installAuthenticator();
+        return pinned;
     }
 
     /**
-     * The JDK's SOCKS implementation only asks for username/password authentication through the default
-     * Authenticator, there's no way to hand it credentials directly. Nothing else in this application uses
-     * Authenticator, and the callback below answers nothing but SOCKS requests, so installing it globally
-     * won't interfere with the Mojang/Microsoft requests made through Unirest.
-     *
-     * The requesting protocol is the only thing worth matching on. SocksSocketImpl asks through the
-     * Authenticator.requestPasswordAuthentication overload that reports the type as SERVER rather than
-     * PROXY, so filtering on the requestor type would reject every SOCKS request instead.
+     * The IP this proxy was pinned to, or null if it wasn't.
+     */
+    public String getPinnedIp() {
+        return pinnedAddress == null ? null : pinnedAddress.getHostAddress();
+    }
+
+    public Proxy toProxy() {
+        InetSocketAddress address = pinnedAddress == null
+            ? new InetSocketAddress(host, port)
+            : new InetSocketAddress(pinnedAddress, port);
+        return new Proxy(Proxy.Type.SOCKS, address);
+    }
+
+    /**
+     * Register this proxy's credentials with the SOCKS Authenticator, see {@link SocksAuthenticator}.
      */
     public void installAuthenticator() {
         if (!hasCredentials()) {
             return;
         }
 
-        Authenticator.setDefault(new Authenticator() {
-            @Override
-            protected PasswordAuthentication getPasswordAuthentication() {
-                if (!"SOCKS5".equalsIgnoreCase(getRequestingProtocol())) {
-                    return null;
-                }
-                return new PasswordAuthentication(username, password.toCharArray());
-            }
-        });
+        SocksAuthenticator.register(host, port, username, password);
+        if (pinnedAddress != null) {
+            SocksAuthenticator.register(pinnedAddress.getHostAddress(), port, username, password);
+        }
     }
 }

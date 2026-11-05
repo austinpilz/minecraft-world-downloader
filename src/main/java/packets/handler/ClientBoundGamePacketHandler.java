@@ -126,6 +126,11 @@ public class ClientBoundGamePacketHandler extends PacketHandler {
 
         operations.put("ForgetLevelChunk", provider -> {
             CoordinateDim2D co = new CoordinateDim2D(provider.readInt(), provider.readInt(), WorldManager.getInstance().getDimension());
+            if (worldManager.isFleet()) {
+                // another bot may still have the chunk loaded, and there is no render distance extender to keep it
+                worldManager.forgetChunk(co);
+                return true;
+            }
             worldManager.unloadChunk(co);
             return worldManager.canForget(co);
         });

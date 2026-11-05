@@ -13,7 +13,11 @@ import kong.unirest.json.JSONObject;
  */
 public class MicrosoftAuthHandler {
     // this should probably be obfuscated but not worth the effort
-    private final static String CLIENT_ID = "99ef6720-81b8-4bf7-a653-d6f429f1cea3";
+    final static String CLIENT_ID = "99ef6720-81b8-4bf7-a653-d6f429f1cea3";
+
+    // accounts added with a device code are refreshed through the v2 endpoint that issued their tokens
+    static final String DEVICE_TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+    static final String SCOPE = "XboxLive.signin offline_access";
 
     private static final String REDIRECT_URL = "http://localhost:%d/world-downloader-auth-complete";
     public static final String LOGIN_URL = "https://login.live.com/oauth20_authorize.srf" +
@@ -28,6 +32,7 @@ public class MicrosoftAuthHandler {
     private transient String authCode;
 
     private final int usedPort;
+    private boolean deviceFlow;
     private String userHash;
     private String microsoftAccessToken;
     private String microsoftRefreshToken;
@@ -43,6 +48,7 @@ public class MicrosoftAuthHandler {
     private LocalDateTime minecraftAccessExpiration = LocalDateTime.MIN;
 
     private transient AuthDetails authDetails;
+    private transient String authDetailsToken;
 
     public MicrosoftAuthHandler(String authCode, int usedPort) {
         this.authCode = authCode;
@@ -57,7 +63,20 @@ public class MicrosoftAuthHandler {
         return String.format(REDIRECT_URL, usedPort);
     }
 
-    private void refresh() {
+    /**
+     * Create a handler from the tokens of a finished device code login, see {@link DeviceCodeLogin}.
+     */
+    static MicrosoftAuthHandler fromDeviceFlow(String accessToken, String refreshToken, int expiresIn) {
+        MicrosoftAuthHandler msAuth = new MicrosoftAuthHandler(null, 0);
+        msAuth.deviceFlow = true;
+        msAuth.microsoftAccessToken = accessToken;
+        msAuth.microsoftRefreshToken = refreshToken;
+        msAuth.microsoftExpiration = LocalDateTime.now().plusSeconds(expiresIn);
+        msAuth.refresh();
+        return msAuth;
+    }
+
+    private synchronized void refresh() {
         LocalDateTime now = LocalDateTime.now();
         if (microsoftAccessToken == null || microsoftExpiration.isBefore(now)) {
             acquireMicrosoftToken();
@@ -85,6 +104,11 @@ public class MicrosoftAuthHandler {
     }
 
     private void acquireMicrosoftToken() {
+        if (deviceFlow) {
+            acquireDeviceFlowMicrosoftToken();
+            return;
+        }
+
         MultipartBody body = Unirest.post("https://login.live.com/oauth20_token.srf")
             .contentType("application/x-www-form-urlencoded")
             .field("client_id", CLIENT_ID)
@@ -109,6 +133,31 @@ public class MicrosoftAuthHandler {
 
         int expiresIn = res.getBody().getObject().getInt("expires_in");
         this.microsoftExpiration = LocalDateTime.now().plusSeconds(expiresIn);
+
+        // invalidate others
+        xboxLiveExpiration = LocalDateTime.MIN;
+        xboxSecurityExpiration = LocalDateTime.MIN;
+        minecraftAccessExpiration = LocalDateTime.MIN;
+    }
+
+    private void acquireDeviceFlowMicrosoftToken() {
+        HttpResponse<JsonNode> res = Unirest.post(DEVICE_TOKEN_URL)
+            .contentType("application/x-www-form-urlencoded")
+            .field("client_id", CLIENT_ID)
+            .field("grant_type", "refresh_token")
+            .field("refresh_token", this.microsoftRefreshToken)
+            .field("scope", SCOPE)
+            .asJson();
+
+        if (!res.isSuccess()) {
+            throw new MinecraftAuthenticationException("Cannot refresh Microsoft token, the account may need to be added again. Status: " + res.getStatus());
+        }
+
+        JSONObject jso = res.getBody().getObject();
+        this.microsoftAccessToken = jso.getString("access_token");
+        // a new refresh token usually comes back, and replaces the old one
+        this.microsoftRefreshToken = jso.optString("refresh_token", this.microsoftRefreshToken);
+        this.microsoftExpiration = LocalDateTime.now().plusSeconds(jso.getInt("expires_in"));
 
         // invalidate others
         xboxLiveExpiration = LocalDateTime.MIN;
@@ -181,6 +230,21 @@ public class MicrosoftAuthHandler {
         if (authDetails == null) {
             this.refresh();
             authDetails = AuthDetails.fromAccessToken(this.minecraftAccessToken);
+            authDetailsToken = this.minecraftAccessToken;
+        }
+        return authDetails;
+    }
+
+    /**
+     * Like {@link #getAuthDetails()}, but refreshes any expired tokens first. Bots can stay connected for longer
+     * than the Minecraft token lasts, so this is used each time one joins. Refreshing can replace the refresh
+     * token, so the handler has to be saved again afterwards.
+     */
+    public synchronized AuthDetails freshAuthDetails() {
+        this.refresh();
+        if (authDetails == null || !this.minecraftAccessToken.equals(authDetailsToken)) {
+            authDetails = AuthDetails.fromAccessToken(this.minecraftAccessToken);
+            authDetailsToken = this.minecraftAccessToken;
         }
         return authDetails;
     }

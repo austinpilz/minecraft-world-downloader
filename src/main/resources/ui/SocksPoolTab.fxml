@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import gui.components.*?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox spacing="6.0" prefWidth="578.0" xmlns="http://javafx.com/javafx" xmlns:fx="http://javafx.com/fxml/1" fx:controller="gui.SocksPoolTabController">
+    <padding><Insets bottom="8.0" left="14.0" right="14.0" top="8.0" /></padding>
+
+    <Label wrapText="true" text="SOCKS5 exits for the bots, one per line as host, host:port or user:pass@host:port. Lines without credentials use the shared ones. Each bot keeps the exit it got." />
+    <TextArea fx:id="entries" prefHeight="120.0" promptText="amsterdam.nl.socks.nordhold.net&#10;atlanta.us.socks.nordhold.net:1080" />
+    <GridPane hgap="8.0" vgap="4.0">
+        <columnConstraints>
+            <ColumnConstraints prefWidth="170.0" />
+            <ColumnConstraints prefWidth="220.0" />
+        </columnConstraints>
+        <Label text="Shared username">
+            <tooltip>
+                <QuickTooltip text="For NordVPN these are the service credentials from the Nord account page, not the email and password" />
+            </tooltip>
+        </Label>
+        <TextField fx:id="username" GridPane.columnIndex="1" />
+        <Label text="Shared password" GridPane.rowIndex="1">
+            <tooltip>
+                <QuickTooltip text="Kept in cache/accounts.json, which only your user can read" />
+            </tooltip>
+        </Label>
+        <PasswordField fx:id="password" GridPane.columnIndex="1" GridPane.rowIndex="1" />
+        <Label text="Refuse shared exit IPs" GridPane.rowIndex="2">
+            <tooltip>
+                <QuickTooltip text="Refuse a bot whose exit has the same public IP as a bot that is online, so the server never sees two accounts from one IP" />
+            </tooltip>
+        </Label>
+        <CheckBox fx:id="refuseDuplicates" GridPane.columnIndex="1" GridPane.rowIndex="2" />
+    </GridPane>
+    <HBox spacing="8.0" alignment="CENTER_LEFT">
+        <Button fx:id="testButton" text="Test pool" onAction="#testPool">
+            <tooltip>
+                <QuickTooltip text="Connect through every entry and show its exit IP, so dead entries and entries that share an IP show up before the bots start" />
+            </tooltip>
+        </Button>
+        <Label fx:id="poolStatus" />
+    </HBox>
+    <TextArea fx:id="results" editable="false" prefHeight="110.0" style="-fx-font-family: monospace;" />
+</VBox>

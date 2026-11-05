@@ -7,6 +7,7 @@ import game.data.chunk.Chunk;
 import game.data.coordinates.Coordinate2D;
 import game.data.coordinates.CoordinateDim2D;
 import game.data.dimension.Dimension;
+import gui.fleet.FleetPanel;
 import java.net.URISyntaxException;
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -46,6 +47,7 @@ public class GuiManager extends Application {
     private Stage stage;
 
     private Stage settingsStage;
+    private Stage fleetStage;
 
     public static void setConfig(Config config) {
         GuiManager.config = config;
@@ -69,6 +71,19 @@ public class GuiManager extends Application {
         instance.loadSettingsInWindow();
         if (chunkGraphicsHandler != null) {
             chunkGraphicsHandler.hideErrorMessage();
+        }
+    }
+
+    public static void loadWindowFleet() {
+        instance.loadFleetInWindow();
+    }
+
+    /**
+     * Center the map on the bot the GUI follows, after it was picked in the Fleet panel.
+     */
+    public static void followFocusedBot() {
+        if (chunkGraphicsHandler != null) {
+            chunkGraphicsHandler.followPlayer();
         }
     }
 
@@ -171,6 +186,23 @@ public class GuiManager extends Application {
         addIcon(settingsStage);
     }
 
+    private void loadFleetInWindow() {
+        if (fleetStage != null) {
+            fleetStage.requestFocus();
+            return;
+        }
+
+        fleetStage = new Stage();
+        attempt(() -> {
+            FleetPanel panel = loadScene("Fleet", fleetStage, FleetPanel.class);
+            fleetStage.setOnHidden(e -> {
+                panel.close();
+                fleetStage = null;
+            });
+        });
+        addIcon(fleetStage);
+    }
+
     public static void addIcon(Stage s) {
         s.getIcons().add(icon);
     }
@@ -204,6 +236,8 @@ public class GuiManager extends Application {
 
         if (name.equals("Settings")) {
             stage.setTitle(TITLE + " - Settings");
+        } else if (name.equals("Fleet")) {
+            stage.setTitle(TITLE + " - Fleet");
         } else if (name.equals("MicrosoftAuth")) {
             stage.setTitle(TITLE + " - Microsoft Authentication");
         } else {
@@ -317,7 +351,7 @@ public class GuiManager extends Application {
             if (chunkGraphicsHandler != null) {
                 chunkGraphicsHandler.getRegionHandler().save();
             }
-            WorldManager.getInstance().save();
+            WorldManager.getInstance().flush();
 
             Platform.exit();
             System.exit(0);
@@ -345,6 +379,15 @@ public class GuiManager extends Application {
     public static void setChunkLoaded(CoordinateDim2D coord, Chunk chunk) {
         if (chunkGraphicsHandler != null) {
             chunkGraphicsHandler.setChunkLoaded(coord, chunk);
+        }
+    }
+
+    /**
+     * Called (from any thread) when a chunk has been written to its region file.
+     */
+    public static void markChunkSaved(CoordinateDim2D coord) {
+        if (chunkGraphicsHandler != null) {
+            chunkGraphicsHandler.markChunkSaved(coord);
         }
     }
 

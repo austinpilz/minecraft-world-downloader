@@ -42,15 +42,25 @@ public class RightClickMenu extends ContextMenu {
     final List<MenuItem> renderModes = List.of(
         construct("Automatic", e -> setRenderMode(null, e)),
         construct("Surface", e -> setRenderMode(ImageMode.NORMAL, e)),
-        construct("Caves", e -> setRenderMode(ImageMode.CAVES, e))
+        construct("Caves", e -> setRenderMode(ImageMode.CAVES, e)),
+        construct("Coverage", e -> setCoverageMode(e))
     );
 
     private void setRenderMode(ImageMode mode, Event e) {
+        disableOnly(e);
+        handler.setCoverageMode(false);
+        RegionImageHandler.setOverrideMode(mode);
+    }
+
+    private void setCoverageMode(Event e) {
+        disableOnly(e);
+        handler.setCoverageMode(true);
+    }
+
+    private void disableOnly(Event e) {
         renderModes.forEach(el -> el.setDisable(false));
         MenuItem clicked = (MenuItem) e.getTarget();
         clicked.setDisable(true);
-
-        RegionImageHandler.setOverrideMode(mode);
     }
 
     public RightClickMenu(GuiMap handler) {
@@ -119,10 +129,13 @@ public class RightClickMenu extends ContextMenu {
         menu.add(new SeparatorMenuItem());
 
         ImageMode current = RegionImageHandler.getOverrideMode();
-
+        renderModes.getLast().setDisable(Config.coverageMap());
 
         menu.add(new Menu("Render mode", null, renderModes.toArray(new MenuItem[0])));
         menu.add(overlayMenu);
+        if (Config.isFleet()) {
+            menu.add(construct("Fleet panel", e -> GuiManager.loadWindowFleet()));
+        }
         menu.add(construct("Settings", e -> GuiManager.loadWindowSettings()));
 
         menu.add(construct("Save & Exit", e -> {

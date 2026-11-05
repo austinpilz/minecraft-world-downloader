@@ -14,9 +14,11 @@ import util.PathUtils;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -24,6 +26,8 @@ import java.util.stream.Stream;
 
 public class McaFile {
     public final static int SECTOR_SIZE = 4096;
+    private static final int MOVE_ATTEMPTS = 5;
+    private static final long MOVE_RETRY_DELAY_MS = 50;
     private HashMap<Integer, ChunkBinary> chunkMap;
     private final Path filePath;
     private final Coordinate2D regionLocation;
@@ -284,7 +288,54 @@ public class McaFile {
 
         // create directory if it doesn't already exist
         Files.createDirectories(filePath.getParent());
-        Files.write(filePath, toWrite);
+        writeAtomically(filePath, toWrite);
+    }
+
+    /**
+     * Write to a temporary file first and then move it into place, so that a crash or a concurrent reader never sees
+     * a partially written region file.
+     */
+    static void writeAtomically(Path target, byte[] data) throws IOException {
+        Path temp = target.resolveSibling(target.getFileName() + ".tmp");
+        Files.write(temp, data);
+
+        IOException lastError = null;
+        for (int attempt = 0; attempt < MOVE_ATTEMPTS; attempt++) {
+            try {
+                move(temp, target);
+                return;
+            } catch (IOException ex) {
+                // on Windows the move fails while another thread or program has the file open, so retry briefly
+                lastError = ex;
+                sleep(MOVE_RETRY_DELAY_MS);
+            }
+        }
+
+        // writing in place is still better than losing the chunks
+        try {
+            Files.write(target, data);
+        } catch (IOException ex) {
+            ex.addSuppressed(lastError);
+            throw ex;
+        } finally {
+            Files.deleteIfExists(temp);
+        }
+    }
+
+    private static void move(Path from, Path to) throws IOException {
+        try {
+            Files.move(from, to, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException ex) {
+            Files.move(from, to, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static void sleep(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**

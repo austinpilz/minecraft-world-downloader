@@ -51,14 +51,14 @@ public class DataReader {
      * Initialise a client-bound data reader.
      */
     public static DataReader clientBound(EncryptionManager manager) {
-        return new DataReader(manager::isEncryptionEnabled, manager::clientBoundDecrypt, manager::streamToClient);
+        return new DataReader(manager::isServerLegEncrypted, manager::clientBoundDecrypt, manager::streamToClient);
     }
 
     /**
      * Initialise a server-bound data reader.
      */
     public static DataReader serverBound(EncryptionManager manager) {
-        return new DataReader(manager::isEncryptionEnabled, manager::serverBoundDecrypt, manager::streamToServer);
+        return new DataReader(manager::isClientLegEncrypted, manager::serverBoundDecrypt, manager::streamToServer);
     }
 
     /**

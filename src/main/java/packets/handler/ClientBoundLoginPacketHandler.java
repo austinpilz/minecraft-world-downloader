@@ -5,6 +5,7 @@ import config.Option;
 import config.Version;
 import game.NetworkMode;
 import proxy.ConnectionManager;
+import proxy.accounts.BotLogin;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -24,6 +25,15 @@ public class ClientBoundLoginPacketHandler extends PacketHandler {
             String serverId = provider.readString();
             byte[] pubKey = provider.readByteArray(provider.readVarInt());
             byte[] nonce = provider.readByteArray(provider.readVarInt());
+
+            if (getConnectionManager().isProxyAccounts()) {
+                // the client connected offline, so it never sees the request. Answer it with the bot's account.
+                boolean shouldAuthenticate = !Config.versionReporter().isAtLeast(Version.V1_20_6) || provider.readBoolean();
+                BotLogin.Session bot = getConnectionManager().getBotSession();
+                getConnectionManager().getEncryptionManager()
+                    .answerEncryptionRequest(pubKey, nonce, serverId, shouldAuthenticate, bot.account(), bot.exit());
+                return false;
+            }
 
             if (Config.versionReporter().isAtLeast(Version.V1_20_6)) {
                 boolean shouldAuthenticate = provider.readBoolean();

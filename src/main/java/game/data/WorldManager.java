@@ -16,16 +16,21 @@ import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 
 import java.util.function.Consumer;
@@ -52,8 +57,8 @@ import game.data.entity.EntityNames;
 import game.data.entity.EntityRegistry;
 import game.data.maps.MapRegistry;
 import game.data.region.McaFile;
-import game.data.region.McaFilePair;
 import game.data.region.Region;
+import game.data.region.RegionStore;
 import game.data.villagers.VillagerManager;
 import gui.GuiManager;
 import packets.DataTypeProvider;
@@ -72,7 +77,9 @@ public class WorldManager {
     private final LevelData levelData;
     private final MapRegistry mapRegistry;
     private final Map<CoordinateDim2D, Queue<Runnable>> chunkLoadCallbacks = new ConcurrentHashMap<>();
-    private Map<CoordinateDim2D, Region> regions = new ConcurrentHashMap<>();
+    private final RegionStore regionStore = new RegionStore();
+    // a save pass writes every dimension, only one runs at a time
+    private final Object saveLock = new Object();
 
     private EntityNames entityMap;
     private BlockColors blockColors;
@@ -84,21 +91,23 @@ public class WorldManager {
     private volatile boolean pausedForWorldSwitch;
     private volatile Long knownWorldSeed;
     private volatile Long pendingWorldSeed;
-    private final Set<Dimension> savingDimension;
 
-    private ContainerManager containerManager;
-    private CommandBlockManager commandBlockManager;
-    private VillagerManager villagerManager;
     private DimensionRegistry dimensionCodec;
     private final RenderDistanceExtender renderDistanceExtender;
 
     private BiConsumer<CoordinateDouble3D, Double> playerPosListener;
-    private final CoordinateDouble3D playerPosition;
     private boolean isBelowGround = false;
-    private double playerRotation = 0;
-    private Dimension dimension;
-    private DimensionType dimensionType;
     private final EntityRegistry entityRegistry;
+
+    // the single user's session, also used in fleet mode by threads that don't belong to a bot until one is online
+    private final PlayerSession singleSession;
+    // fleet mode only: the bots that are logged in, and the one the GUI follows
+    private volatile boolean fleet;
+    private final List<PlayerSession> fleetSessions = new CopyOnWriteArrayList<>();
+    private volatile PlayerSession focus;
+    private volatile boolean acceptingBots = true;
+    // chunks each bot brought in since the proxy started, over all its connections, by lower case bot name
+    private final Map<String, AtomicLong> chunksByBot = new ConcurrentHashMap<>();
     private final ChunkFactory chunkFactory;
 
     private ScheduledExecutorService saveService;
@@ -112,9 +121,7 @@ public class WorldManager {
 
         this.levelData = new LevelData(this);
 
-        this.playerPosition = this.levelData.getPlayerPosition();
-        this.dimension = this.levelData.getPlayerDimension();
-        this.savingDimension = new HashSet<>();
+        this.singleSession = PlayerSession.single(this.levelData.getPlayerPosition(), this.levelData.getPlayerDimension());
         this.renderDistanceExtender = new RenderDistanceExtender(this);
     }
 
@@ -152,56 +159,232 @@ public class WorldManager {
         this.renderDistanceExtender.setExtendedDistance(val);
     }
 
-    public Dimension getDimension() {
-        return dimension;
+    /**
+     * Run several sessions at once, one per bot. Each bot's packets are handled with its own session bound to the
+     * thread, see {@link PlayerSession}.
+     */
+    public void setFleet(boolean fleet) {
+        this.fleet = fleet;
     }
 
+    public boolean isFleet() {
+        return fleet;
+    }
+
+    /**
+     * The session of the player whose packets the current thread handles. Other threads, like the GUI's, get the
+     * session the GUI follows.
+     */
+    public PlayerSession session() {
+        PlayerSession bound = PlayerSession.bound();
+        return bound != null ? bound : focus();
+    }
+
+    /**
+     * The session the GUI follows: in fleet mode the first bot that logged in, until another one is chosen.
+     */
+    public PlayerSession focus() {
+        PlayerSession focus = this.focus;
+        return focus != null ? focus : singleSession;
+    }
+
+    public void setFocus(PlayerSession session) {
+        if (session == null || !fleetSessions.contains(session)) {
+            return;
+        }
+        this.focus = session;
+        if (session.getDimension() != null) {
+            GuiManager.setDimension(session.getDimension());
+        }
+        notifyPlayerPosListener(session);
+    }
+
+    private boolean isFocus(PlayerSession session) {
+        return session == focus();
+    }
+
+    /**
+     * The bots of the fleet that are logged in.
+     */
+    public List<PlayerSession> getFleetSessions() {
+        return List.copyOf(fleetSessions);
+    }
+
+    /**
+     * Whether new bots may log in. Turning this off leaves the bots that are online alone.
+     */
+    public boolean isAcceptingBots() {
+        return acceptingBots;
+    }
+
+    public void setAcceptingBots(boolean acceptingBots) {
+        this.acceptingBots = acceptingBots;
+    }
+
+    public void kickAllBots() {
+        fleetSessions.forEach(PlayerSession::kick);
+    }
+
+    /**
+     * The chunks a bot brought in since the proxy started, over all the times it connected.
+     */
+    public long getTotalChunks(String botName) {
+        AtomicLong count = chunksByBot.get(botName.toLowerCase(Locale.ROOT));
+        return count == null ? 0 : count.get();
+    }
+
+    /**
+     * A bot of the fleet logged in. Its packets were already handled with the session bound, this makes it count
+     * for unloading chunks and lets the GUI follow it.
+     */
+    public void addFleetSession(PlayerSession session) {
+        fleetSessions.add(session);
+    }
+
+    /**
+     * A bot of the fleet disconnected. Chunks no other bot has loaded are unloaded once saved, and so are the
+     * entities only it could see.
+     */
+    public void endFleetSession(PlayerSession session) {
+        if (!fleetSessions.remove(session)) {
+            return;
+        }
+        if (this.focus == session) {
+            this.focus = fleetSessions.stream().filter(s -> s.getDimension() != null).findFirst().orElse(null);
+            PlayerSession next = focus();
+            if (next.getDimension() != null) {
+                GuiManager.setDimension(next.getDimension());
+            }
+        }
+
+        forgetAllChunks(session);
+        entityRegistry.forgetSession(session);
+    }
+
+    /**
+     * The server told the player of the current thread to forget a chunk. In fleet mode the chunk is only unloaded
+     * when no other bot has it loaded.
+     */
+    public void forgetChunk(CoordinateDim2D coordinate) {
+        PlayerSession session = session();
+        if (!session.isFleet()) {
+            unloadChunk(coordinate);
+            return;
+        }
+        // on the factory thread, so it can't overtake the chunk itself
+        chunkFactory.runOnFactoryThread(PlayerSession.capture(() -> forgetChunk(session, coordinate)));
+    }
+
+    private void forgetChunk(PlayerSession session, CoordinateDim2D coordinate) {
+        session.loadedChunks().remove(coordinate);
+        for (PlayerSession other : fleetSessions) {
+            if (other != session && other.loadedChunks().contains(coordinate)) {
+                return;
+            }
+        }
+        unloadChunk(coordinate);
+    }
+
+    /**
+     * Forget every chunk the bot has loaded, after the chunks it sent before that are parsed.
+     */
+    private void forgetAllChunks(PlayerSession session) {
+        chunkFactory.runOnFactoryThread(PlayerSession.capture(() -> {
+            for (CoordinateDim2D coordinate : List.copyOf(session.loadedChunks())) {
+                forgetChunk(session, coordinate);
+            }
+        }));
+    }
+
+    /**
+     * A chunk received by the player of the current thread was added to the world.
+     */
+    public void chunkReceived(CoordinateDim2D coordinate) {
+        PlayerSession session = PlayerSession.bound();
+        if (session != null && session.isFleet()) {
+            session.chunkLoaded(coordinate);
+            chunksByBot.computeIfAbsent(session.getName().toLowerCase(Locale.ROOT), k -> new AtomicLong()).incrementAndGet();
+        }
+    }
+
+    public Dimension getDimension() {
+        return session().getDimension();
+    }
+
+    /**
+     * Set the dimension the player is in, from a Login or Respawn packet.
+     */
     public void setDimension(Dimension dimension) {
-        if (this.dimension.equals(dimension)) {
+        PlayerSession session = session();
+        Dimension previous = session.getDimension();
+        if (session.isFleet()) {
+            // the server doesn't always tell the bot to forget the chunks it had before a Login or Respawn, so they are
+            // forgotten here, and it sends again the ones the bot still sees
+            forgetAllChunks(session);
+        }
+        if (dimension.equals(previous)) {
             return;
         }
 
-        saveAndUnloadChunks();
-        this.dimension = dimension;
+        if (!session.isFleet()) {
+            unloadDimension(previous);
+        }
+        session.setDimension(dimension);
 
-        this.renderDistanceExtender.reset();
+        if (session.isFleet() && this.focus == null) {
+            this.focus = session;
+        }
+        if (!session.isFleet()) {
+            this.renderDistanceExtender.reset();
+        }
 
-        GuiManager.setDimension(this.dimension);
+        if (isFocus(session)) {
+            GuiManager.setDimension(dimension);
+        }
     }
 
     public void setDimensionType(DimensionType dimensionType) {
-        this.dimensionType = dimensionType;
-        Chunk_1_17.setWorldHeight(dimensionType.getDimensionMinHeight(), dimensionType.getDimensionMaxHeight());
+        PlayerSession session = session();
+        session.setDimensionType(dimensionType);
+        Chunk_1_17.setWorldHeight(session.getDimension(), dimensionType.getDimensionMinHeight(), dimensionType.getDimensionMaxHeight());
     }
 
     private void saveAndUnloadChunks() {
-        if (saveService == null) {
+        unloadDimension(getDimension());
+    }
+
+    /**
+     * Unload every chunk in the dimension. Chunks that haven't been saved yet are no longer returned by getChunk, but
+     * stay in their region until the save that is started here has written them. The regions themselves are kept, so
+     * a region can't be read from disk again before its last chunks are written.
+     */
+    private void unloadDimension(Dimension dimension) {
+        if (saveService == null || dimension == null) {
             return;
         }
 
-        // keep references of dimensions and regions, since the saving thread executes later and
-        // will have been overwritten by then
-        Dimension dimension = this.dimension;
-        Map<CoordinateDim2D, Region> regions = this.regions;
-        saveService.execute(() -> {
-            save(dimension, regions);
-            unloadChunks(regions);
-        });
-        this.regions = new ConcurrentHashMap<>();
+        for (Region region : regionStore.regions(dimension)) {
+            region.unloadAll();
+        }
+        saveService.execute(() -> attempt(() -> save(true)));
     }
 
     private void checkAboveSurface() {
-        Coordinate3D discrete = this.playerPosition.discretize();
+        PlayerSession session = focus();
+        Coordinate3D discrete = session.getPosition().discretize();
 
         Coordinate3D local = discrete.globalToChunkLocal();
 
-        if (dimension == Dimension.NETHER) {
+        if (session.getDimension() == Dimension.NETHER) {
             isBelowGround = local.getY() < 128;
             return;
         }
 
-        Chunk c = getChunk(discrete.globalToChunk());
-        if (c == null) {
+        if (session.getDimension() == null) {
+            return;
+        }
+        Chunk c = getChunk(discrete.globalToChunk().addDimension(session.getDimension()));
+        if (c == null || c.getChunkHeightHandler() == null) {
             return;
         }
 
@@ -209,19 +392,22 @@ public class WorldManager {
         isBelowGround = local.getY() < height;
     }
 
-    private void unloadChunks(Map<CoordinateDim2D, Region> regions) {
-        regions.values().forEach(Region::unloadAll);
-    }
-
     public double getPlayerRotation() {
-        return playerRotation;
+        return session().getRotation();
     }
 
     public void setPlayerRotation(double playerRotation) {
-        this.playerRotation = playerRotation;
+        PlayerSession session = session();
+        session.setRotation(playerRotation);
 
+        if (isFocus(session)) {
+            notifyPlayerPosListener(session);
+        }
+    }
+
+    private void notifyPlayerPosListener(PlayerSession session) {
         if (this.playerPosListener != null) {
-            this.playerPosListener.accept(this.playerPosition, this.playerRotation);
+            this.playerPosListener.accept(session.getPosition(), session.getRotation());
         }
     }
 
@@ -230,7 +416,7 @@ public class WorldManager {
      * @param center center region around which to find neighbouring regions
      */
     public void drawExistingChunks(Coordinate2D center) {
-        Collection<McaFile> files = McaFile.getFiles(center, this.dimension, 16).toList();
+        Collection<McaFile> files = McaFile.getFiles(center, getDimension(), 16).toList();
 
         for (McaFile file : files) {
             drawRegion(file);
@@ -238,7 +424,7 @@ public class WorldManager {
     }
 
     public void drawExistingRegion(Coordinate2D coords) {
-        CoordinateDim2D regionCoordinates = coords.addDimension(this.dimension);
+        CoordinateDim2D regionCoordinates = coords.addDimension(getDimension());
         drawRegion(new McaFile(regionCoordinates));
     }
 
@@ -251,7 +437,7 @@ public class WorldManager {
      */
     private void drawRegion(McaFile file) {
         GuiManager.resetRegion(file.getRegionLocation());
-        Map<CoordinateDim2D, Chunk> chunks = file.getParsedChunks(this.dimension);
+        Map<CoordinateDim2D, Chunk> chunks = file.getParsedChunks(getDimension());
 
         // add all chunks to the WorldManager if it doesn't have them yet
         Set<CoordinateDim2D> toDelete = new HashSet<>();
@@ -303,9 +489,7 @@ public class WorldManager {
         if (!drawInGui || writeChunks) {
             CoordinateDim2D regionCoordinates = chunk.location.chunkToDimRegion();
 
-            Region r = regions.computeIfAbsent(regionCoordinates, Region::new);
-
-            r.addChunk(chunk.location, chunk, overrideExisting);
+            regionStore.withRegion(regionCoordinates, r -> r.addChunk(chunk.location, chunk, overrideExisting));
         }
 
         if (drawInGui) {
@@ -333,30 +517,28 @@ public class WorldManager {
      * @return the chunk
      */
     public Chunk getChunk(CoordinateDim2D coordinate) {
-        return regions.getOrDefault(coordinate.chunkToDimRegion(), Region.EMPTY).getChunk(coordinate);
+        Region region = regionStore.get(coordinate.chunkToDimRegion());
+        return region == null ? null : region.getChunk(coordinate);
     }
 
     public Chunk getChunk(Coordinate2D coords) {
-        return getChunk(coords.addDimension(this.dimension));
+        return getChunk(coords.addDimension(getDimension()));
     }
 
     public void unloadChunk(CoordinateDim2D coordinate) {
         chunkFactory.unloadChunk(coordinate);
 
         CoordinateDim2D regionCoordinate = coordinate.chunkToDimRegion();
-        Region r = regions.get(regionCoordinate);
+        Region r = regionStore.get(regionCoordinate);
         if (r != null) {
             r.removeChunk(coordinate);
-
-            if (r.canRemove()) {
-                regions.remove(regionCoordinate);
-            }
+            regionStore.removeIfEmpty(regionCoordinate);
         }
         this.renderDistanceExtender.notifyUnloaded(coordinate.stripDimension());
     }
 
     public BlockState blockStateAt(Coordinate3D coordinate3D) {
-        Chunk c = this.getChunk(coordinate3D.globalToChunk().addDimension(this.dimension));
+        Chunk c = this.getChunk(coordinate3D.globalToChunk().addDimension(getDimension()));
 
         if (c == null) {
             return null;
@@ -392,7 +574,10 @@ public class WorldManager {
      */
     public void touchChunk(ChunkEntities c) {
         c.touch();
-        regions.get(c.getLocation().chunkToDimRegion()).touch();
+        Region region = regionStore.get(c.getLocation().chunkToDimRegion());
+        if (region != null) {
+            region.touch();
+        }
     }
 
     public DimensionRegistry getDimensionRegistry() {
@@ -434,83 +619,78 @@ public class WorldManager {
         saveService.scheduleWithFixedDelay(() -> attempt(this::save), INIT_SAVE_DELAY, SAVE_DELAY, TimeUnit.MILLISECONDS);
     }
 
-    private void save(Dimension dimension, Map<CoordinateDim2D, Region> regions) {
+    /**
+     * Write the chunks of every dimension.
+     *
+     * @param flush also write chunks while saving is paused. Used when chunks are unloaded: they were all received
+     *              before the pause, as chunks are dropped on arrival while paused.
+     */
+    private void save(boolean flush) {
         checkAboveSurface();
 
-        if (!writeChunks) {
+        if (!writeChunks || (isPaused && !flush)) {
             return;
         }
 
-        if (savingDimension.contains(dimension)) {
-            System.out.println("Dimension " + dimension + " already being saved");
-            if (saveService != null) {
-                attempt(() -> saveService.awaitTermination(30, TimeUnit.SECONDS));
+        synchronized (saveLock) {
+            // level.dat holds the player's position, which may be in a different world while paused
+            if (!isPaused) {
+                attempt(levelData::save);
+                attempt(mapRegistry::save);
             }
-            return;
-        }
-        savingDimension.add(dimension);
 
-        // save level.dat
-        attempt(levelData::save);
-        attempt(mapRegistry::save);
-
-        if (!regions.isEmpty()) {
-            // convert the values to an array first to prevent blocking any threads
-            Region[] r = regions.values().toArray(new Region[0]);
-            for (Region region : r) {
-                McaFilePair files = region.toFile(getPlayerPosition().globalToChunk());
-                if (files == null) {
-                    continue;
+            for (Dimension dimension : List.copyOf(regionStore.dimensions())) {
+                Collection<Coordinate2D> players = playerChunks(dimension);
+                for (Region region : regionStore.regions(dimension)) {
+                    attempt(() -> region.save(players));
+                    regionStore.removeIfEmpty(region.getRegionCoordinates());
                 }
-
-                write(files.getRegion());
-                write(files.getEntities());
             }
         }
-
-        // remove empty regions
-        regions.entrySet().removeIf(el -> el.getValue().isEmpty());
-
-        savingDimension.remove(dimension);
 
         // suggest GC to clear up some memory that may have been freed by saving
         System.gc();
     }
 
     /**
-     * Save the world. Will tell all regions to save their chunks.
+     * Chunk positions of the players in the given dimension, chunks far from all of them are unloaded once saved.
+     */
+    Collection<Coordinate2D> playerChunks(Dimension dimension) {
+        List<PlayerSession> sessions = fleet ? fleetSessions : List.of(singleSession);
+        List<Coordinate2D> chunks = new ArrayList<>();
+        for (PlayerSession session : sessions) {
+            if (dimension.equals(session.getDimension())) {
+                chunks.add(session.getChunkPosition());
+            }
+        }
+        return chunks;
+    }
+
+    /**
+     * Save the world. Will tell all regions to save their chunks. Does nothing while saving is paused.
      */
     public void save() {
-        save(this.dimension, this.regions);
+        save(false);
     }
 
-    private void write(McaFile file) {
-        if (file == null || file.isEmpty()) {
-            return;
-        }
-
-        attempt(file::write);
+    /**
+     * Save the world when exiting, including chunks received before saving was paused.
+     */
+    public void flush() {
+        save(true);
     }
 
+    // these follow the windows a player opens, so every bot has its own
     public ContainerManager getContainerManager() {
-        if (containerManager == null) {
-            containerManager = new ContainerManager();
-        }
-        return containerManager;
+        return session().getContainerManager();
     }
-    
+
     public CommandBlockManager getCommandBlockManager() {
-        if (commandBlockManager == null) {
-            commandBlockManager = new CommandBlockManager();
-        }
-        return commandBlockManager;
+        return session().getCommandBlockManager();
     }
-    
+
     public VillagerManager getVillagerManager() {
-        if (villagerManager == null) {
-            villagerManager = new VillagerManager();
-        }
-        return villagerManager;
+        return session().getVillagerManager();
     }
 
     public void pauseSaving() {
@@ -539,7 +719,7 @@ public class WorldManager {
      * ever dropping (e.g. a hub/network server) - pause saving so the new world's chunks can't get merged into
      * the old world's data at colliding coordinates, until the user confirms they want to keep saving here.
      */
-    public void checkWorldSeed(long seed) {
+    public synchronized void checkWorldSeed(long seed) {
         if (knownWorldSeed == null) {
             knownWorldSeed = readWorldSeedMarker();
         }
@@ -547,6 +727,15 @@ public class WorldManager {
         if (knownWorldSeed == null) {
             knownWorldSeed = seed;
             writeWorldSeedMarker(seed);
+            return;
+        }
+
+        // in fleet mode only the bot that was moved stops saving, the others are still in the right world
+        PlayerSession session = session();
+        if (session.isFleet()) {
+            if (knownWorldSeed != seed && !session.acceptsSeed(seed)) {
+                quarantine(session, "it is in a different world (seed " + seed + " instead of " + knownWorldSeed + ")", seed);
+            }
             return;
         }
 
@@ -560,6 +749,49 @@ public class WorldManager {
         pausedForWorldSwitch = true;
         System.out.println("Auto-paused: a different world was detected");
         GuiManager.setStatusMessage("");
+    }
+
+    /**
+     * The server sent a Login packet. A second one on the same connection means a proxy like Velocity moved the bot
+     * to another server, which may be another world even when its seed is the same.
+     */
+    public void onLogin() {
+        PlayerSession session = session();
+        if (session.markLoggedIn() && session.isFleet()) {
+            quarantine(session, "the server moved it to another server");
+        }
+    }
+
+    /**
+     * The server switched the connection back to the configuration phase, which it does to move the bot to another
+     * server.
+     */
+    public void onReconfiguration() {
+        PlayerSession session = session();
+        if (session.isFleet() && session.isLoggedIn()) {
+            quarantine(session, "the server moved it to another server");
+        }
+    }
+
+    /**
+     * Stop saving what a bot of the fleet receives, until the user resumes it.
+     */
+    public void quarantine(PlayerSession session, String reason) {
+        quarantine(session, reason, null);
+    }
+
+    private void quarantine(PlayerSession session, String reason, Long seed) {
+        if (session.quarantine(reason, seed)) {
+            System.out.println("Bot " + session + " stopped saving: " + reason + ". Resume it if this is still the same world, or kick it.");
+        }
+    }
+
+    /**
+     * Whether chunks and changes received by the player of the current thread may go into the world: saving isn't
+     * paused, and in fleet mode the bot hasn't been stopped.
+     */
+    public boolean acceptsData() {
+        return !isPaused && session().acceptsData();
     }
 
     private Path worldSeedMarkerPath() {
@@ -593,11 +825,12 @@ public class WorldManager {
     }
 
     public void deleteAllExisting() {
-        regions = new HashMap<>();
+        Dimension dimension = getDimension();
+        regionStore.clear(dimension);
         chunkFactory.clear();
 
         try {
-            File dir = PathUtils.toPath(Config.getWorldOutputDir(), this.dimension.getPath(), "region").toFile();
+            File dir = PathUtils.toPath(Config.getWorldOutputDir(), dimension.getPath(), "region").toFile();
 
             if (dir.isDirectory()) {
                 FileUtils.cleanDirectory(dir);
@@ -618,17 +851,18 @@ public class WorldManager {
     }
 
     public Coordinate3D getPlayerPosition() {
-        return playerPosition.discretize();
+        return session().getPosition().discretize();
     }
 
     public void setPlayerPosition(double x, double y, double z) {
-        this.playerPosition.setTo(x, y, z);
+        PlayerSession session = session();
+        session.getPosition().setTo(x, y, z);
 
-        if (this.renderDistanceExtender != null) {
+        if (this.renderDistanceExtender != null && !session.isFleet()) {
             this.renderDistanceExtender.updatePlayerPos(getPlayerPosition());
         }
-        if (this.playerPosListener != null) {
-            this.playerPosListener.accept(this.playerPosition, this.playerRotation);
+        if (isFocus(session)) {
+            notifyPlayerPosListener(session);
         }
     }
 
@@ -652,6 +886,7 @@ public class WorldManager {
      */
     public Set<Coordinate2D> sendChunksToPlayer(Collection<Coordinate2D> desired) {
         PacketInjector injector = Config.getPacketInjector();
+        Dimension dimension = getDimension();
         Set<Coordinate2D> loaded = new HashSet<>();
 
         int chunksSent = 0;
@@ -663,13 +898,13 @@ public class WorldManager {
                 continue;
             }
 
-            McaFile mca = loadedFiles.computeIfAbsent(coords.chunkToRegion(), (c) -> McaFile.ofCoords(c.addDimension(this.dimension)));
+            McaFile mca = loadedFiles.computeIfAbsent(coords.chunkToRegion(), (c) -> McaFile.ofCoords(c.addDimension(dimension)));
 
             if (mca == null) {
                 continue;
             }
 
-            CoordinateDim2D withDim = coords.addDimension(this.dimension);
+            CoordinateDim2D withDim = coords.addDimension(dimension);
             ChunkBinary chunkBinary = mca.getChunkBinary(withDim);
 
             // skip any chunks not in the MCA file
@@ -714,6 +949,10 @@ public class WorldManager {
         return loaded;
     }
 
+    /**
+     * The single user's connection was lost. In fleet mode bots end their own session instead, see
+     * {@link #endFleetSession}.
+     */
     public void resetConnection() {
         this.renderDistanceExtender.reset();
         this.entityRegistry.reset();
@@ -738,24 +977,21 @@ public class WorldManager {
     }
 
     public int countActiveChunks() {
-        return countActiveChunks(regions);
-    }
-
-    private int countActiveChunks(Map<CoordinateDim2D, Region> regions) {
         int total = 0;
-        for (Region r : regions.values()) {
+        for (Region r : regionStore.allRegions()) {
             total += r.countChunks();
         }
         return total;
     }
 
     public void blockChange(DataTypeProvider provider) {
-        if (!Config.handleBlockChanges() || isPaused) {
+        if (!Config.handleBlockChanges() || !acceptsData()) {
             return;
         }
+        Dimension dimension = getDimension();
         chunkFactory.runOnFactoryThread(() -> {
             Coordinate3D coords = provider.readCoordinates();
-            Chunk c = getChunk(coords.globalToChunk().addDimension(this.dimension));
+            Chunk c = getChunk(coords.globalToChunk().addDimension(dimension));
             if (c == null) {
                 return;
             }
@@ -766,11 +1002,12 @@ public class WorldManager {
     }
 
     public void multiBlockChange(Coordinate3D pos, DataTypeProvider provider) {
-        if (!Config.handleBlockChanges() || isPaused) {
+        if (!Config.handleBlockChanges() || !acceptsData()) {
             return;
         }
+        Dimension dimension = getDimension();
         chunkFactory.runOnFactoryThread(() -> {
-            Chunk c = getChunk(pos.addDimension(this.dimension));
+            Chunk c = getChunk(pos.addDimension(dimension));
             if (c == null) {
                 return;
             }
@@ -785,9 +1022,10 @@ public class WorldManager {
      * it is given to the chunk to parse immediately.
      */
     public void updateLight(DataTypeProvider provider) {
-        if (isPaused) {
+        if (!acceptsData()) {
             return;
         }
+        Dimension dimension = getDimension();
         chunkFactory.runOnFactoryThread(() -> {
             int chunkX = provider.readVarInt();
             int chunkZ = provider.readVarInt();
@@ -804,7 +1042,7 @@ public class WorldManager {
     }
 
     public int countActiveRegions() {
-        return this.regions.size();
+        return regionStore.countRegions();
     }
 
     public int countQueuedChunks() {
@@ -813,7 +1051,7 @@ public class WorldManager {
 
 
     public int countActiveBinaryChunks() {
-        return this.regions.values().stream().mapToInt(el -> el.getFile().countChunks()).sum();
+        return regionStore.allRegions().stream().mapToInt(el -> el.getFile().countChunks()).sum();
     }
 
     public void loadLevelData() {

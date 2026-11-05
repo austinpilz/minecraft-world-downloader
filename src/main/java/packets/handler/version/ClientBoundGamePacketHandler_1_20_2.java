@@ -22,6 +22,7 @@ public class ClientBoundGamePacketHandler_1_20_2 extends ClientBoundGamePacketHa
 
         Map<String, PacketOperator> operators = getOperators();
         operators.put("Login", provider -> {
+            WorldManager.getInstance().onLogin();
             PacketBuilder replacement = new PacketBuilder(protocol.clientBound("Login"));
 
             replacement.copy(provider, INT, BOOL);

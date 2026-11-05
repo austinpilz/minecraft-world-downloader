@@ -7,6 +7,8 @@ import config.VersionReporter;
 import game.data.chunk.version.*;
 import game.data.coordinates.Coordinate3D;
 import game.data.coordinates.CoordinateDim2D;
+import game.data.dimension.Dimension;
+import game.data.PlayerSession;
 import game.data.WorldManager;
 import packets.DataTypeProvider;
 import se.llbit.nbt.NamedTag;
@@ -63,7 +65,7 @@ public class ChunkFactory {
      * @param entityData the NBT data of the entity
      */
     public void updateTileEntity(Coordinate3D position, SpecificTag entityData) {
-        if (WorldManager.getInstance().isPaused()) {
+        if (!WorldManager.getInstance().acceptsData()) {
             return;
         }
 
@@ -84,17 +86,20 @@ public class ChunkFactory {
      * Need a non-static method to do this as we cannot otherwise call notify
      */
     public void addChunk(DataTypeProvider provider) {
-        // if the world manager is currently paused, discard this chunk
-        if (WorldManager.getInstance().isPaused()) {
+        // if the world manager is currently paused, or this bot of a fleet stopped saving, discard this chunk
+        if (!WorldManager.getInstance().acceptsData()) {
             return;
         }
 
-        Runnable r = () -> {
-            CoordinateDim2D chunkPos = new CoordinateDim2D(provider.readInt(), provider.readInt(), WorldManager.getInstance().getDimension());
+        // the dimension may have changed by the time the parser thread gets to this chunk
+        Dimension dimension = WorldManager.getInstance().getDimension();
+        Runnable r = PlayerSession.capture(() -> {
+            CoordinateDim2D chunkPos = new CoordinateDim2D(provider.readInt(), provider.readInt(), dimension);
             getUnparsed(chunkPos).setProvider(provider);
+            WorldManager.getInstance().chunkReceived(chunkPos);
 
             this.parse();
-        };
+        });
 
         if (executor != null) {
             executor.execute(r);
@@ -191,7 +196,7 @@ public class ChunkFactory {
     }
 
     public void runOnFactoryThread(Runnable r) {
-        executor.execute(r);
+        executor.execute(PlayerSession.capture(r));
     }
 
     public void unloadChunk(CoordinateDim2D coord) {

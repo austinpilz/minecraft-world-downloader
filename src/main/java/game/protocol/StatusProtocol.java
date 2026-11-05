@@ -10,6 +10,12 @@ public class StatusProtocol extends Protocol {
     public StatusProtocol() {
         clientBound = new HashMap<>();
         serverBound = new HashMap<>();
+
+        clientBound.put(0x00, "StatusResponse");
+        clientBound.put(0x01, "Pong");
+
+        serverBound.put(0x00, "StatusRequest");
+        serverBound.put(0x01, "Ping");
     }
 
     @Override

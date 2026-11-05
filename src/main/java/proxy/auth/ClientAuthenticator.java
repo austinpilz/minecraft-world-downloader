@@ -27,10 +27,14 @@ import static util.PrintUtils.devPrint;
  */
 public class ClientAuthenticator extends AuthDetailsManager {
     private static final int STATUS_SUCCESS = 204;
-    private static final String AUTH_URL = "https://sessionserver.mojang.com/session/minecraft/join";
     private static final String KEY_URL = "https://api.minecraftservices.com/player/certificates";
 
     public ClientAuthenticator() { }
+
+    // the property lets tests point this at a local server
+    private static String authUrl() {
+        return System.getProperty("mwd.sessionServer", "https://sessionserver.mojang.com") + "/session/minecraft/join";
+    }
 
     public ClientAuthenticator(String username) {
         super(username);
@@ -51,6 +55,14 @@ public class ClientAuthenticator extends AuthDetailsManager {
             throw new AuthenticationException("Cannot get valid authentication details.", e);
         }
 
+        join(details, hash, Config.getSocksProxy());
+    }
+
+    /**
+     * Make the join request for the given account, from the given exit.
+     * @param socksProxy the SOCKS proxy the game connection goes through, or null if it connects directly
+     */
+    public void join(AuthDetails details, String hash, SocksProxyDetails socksProxy) {
         Map<String, String> body = new HashMap<>();
 
         body.put("accessToken", details.getAccessToken());
@@ -60,13 +72,12 @@ public class ClientAuthenticator extends AuthDetailsManager {
         GuiManager.setStatusMessage("Authenticating with Mojang servers...");
 
         String json = new Gson().toJson(body);
-        SocksProxyDetails socksProxy = Config.getSocksProxy();
 
         int status;
         String statusText;
         try {
             if (socksProxy == null) {
-                HttpResponse<String> str = Unirest.post(AUTH_URL)
+                HttpResponse<String> str = Unirest.post(authUrl())
                         .header("Content-Type", "application/json")
                         .body(json)
                         .asString();
@@ -75,7 +86,7 @@ public class ClientAuthenticator extends AuthDetailsManager {
             } else {
                 // The session server records the IP that made the join, and the remote server passes the IP it sees
                 // to hasJoined. When the game connection goes through SOCKS, the join has to come from the same IP.
-                HttpURLConnection conn = (HttpURLConnection) new URL(AUTH_URL).openConnection(socksProxy.toProxy());
+                HttpURLConnection conn = (HttpURLConnection) new URL(authUrl()).openConnection(socksProxy.toProxy());
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json");
                 conn.setConnectTimeout(8000);

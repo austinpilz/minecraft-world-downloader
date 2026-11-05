@@ -6,10 +6,13 @@ import game.data.coordinates.Coordinate2D;
 import game.data.coordinates.CoordinateDim2D;
 import game.data.coordinates.CoordinateDouble2D;
 import game.data.coordinates.CoordinateDouble3D;
+import game.data.PlayerSession;
 import game.data.WorldManager;
 import game.data.chunk.Chunk;
 import game.data.dimension.Dimension;
 import game.data.entity.PlayerEntity;
+import gui.fleet.FleetPanel;
+import gui.images.CoverageImageHandler;
 import gui.images.RegionImageHandler;
 import gui.markers.MapMarkerHandler;
 import gui.markers.PlayerMarker;
@@ -37,6 +40,7 @@ import javafx.scene.text.TextAlignment;
 import javafx.util.Duration;
 
 import java.util.Collection;
+import java.util.Locale;
 import util.PrintUtils;
 
 /**
@@ -53,6 +57,7 @@ public class GuiMap {
     public Label helpLabel;
     public Label coordsLabel;
     public Button playerLockButton;
+    public Button fleetButton;
     public Label statusLabel;
 
     private CoordinateDouble3D playerPos;
@@ -64,6 +69,7 @@ public class GuiMap {
     private int gridSize;
 
     private RegionImageHandler regionHandler;
+    private CoverageImageHandler coverageHandler;
     private MapMarkerHandler markerHandler;
     private OverlayManager overlayManager;
     private OverlayRenderer overlayRenderer;
@@ -95,8 +101,10 @@ public class GuiMap {
     void initialize() {
         this.zoomBehaviour = Config.smoothZooming() ? new SmoothZooming() : new SnapZooming();
         this.regionHandler = new RegionImageHandler();
+        this.coverageHandler = new CoverageImageHandler();
         this.markerHandler = new MapMarkerHandler();
         this.overlayManager = new OverlayManager();
+        this.overlayManager.getCoverage().setListener(coverageHandler);
         this.overlayManager.loadFromConfig();
         this.overlayRenderer = new OverlayRenderer(overlayManager);
         this.bounds = new Bounds();
@@ -135,6 +143,8 @@ public class GuiMap {
         });
 
         playerLockButton.setVisible(false);
+        fleetButton.setVisible(Config.isFleet());
+        fleetButton.setOnAction(e -> GuiManager.loadWindowFleet());
 
         setupCanvasProperties();
         setupContextMenu();
@@ -232,6 +242,7 @@ public class GuiMap {
             // if mouse clicked without dragging
             if (this.initialMouseX == mouseX && initialMouseY == mouseY) {
                 markerHandler.setMarker(null);
+                focusBotAt(mouseX, mouseY);
             }
         });
 
@@ -254,7 +265,7 @@ public class GuiMap {
         playerLockButton.setOnMouseClicked(e -> followPlayer());
     }
 
-    private void followPlayer() {
+    void followPlayer() {
         lockedToPlayer = true;
         playerLockButton.setVisible(false);
     }
@@ -310,18 +321,37 @@ public class GuiMap {
             }
         }
 
-        ChunkImageFactory imageFactory = chunk.getChunkImageFactory();
-        imageFactory.onComplete((imageMap, isSaved) -> {
-            regionHandler.drawChunk(coord, imageMap, isSaved);
-            if (isSaved) {
-                overlayManager.getCoverage().chunkSaved(coord.getDimension(), coord);
-            }
-        });
-        imageFactory.onSaved(() -> {
-            regionHandler.markChunkSaved(coord);
+        if (chunk.isSaved()) {
             overlayManager.getCoverage().chunkSaved(coord.getDimension(), coord);
-        });
+        } else {
+            overlayManager.getCoverage().chunkSeen(coord.getDimension(), coord);
+        }
+
+        // the coverage map doesn't need chunk images, skipping them is what makes it cheap
+        if (Config.coverageMap()) {
+            return;
+        }
+
+        ChunkImageFactory imageFactory = chunk.getChunkImageFactory();
+        imageFactory.onComplete((imageMap, isSaved) -> regionHandler.drawChunk(coord, imageMap, isSaved));
         imageFactory.requestImage();
+    }
+
+    void markChunkSaved(CoordinateDim2D coord) {
+        regionHandler.markChunkSaved(coord);
+        overlayManager.getCoverage().chunkSaved(coord.getDimension(), coord);
+    }
+
+    /**
+     * Switch between the coverage map and the rendered map. Chunks that were loaded while the coverage map was shown
+     * are only rendered once they are sent again.
+     */
+    public void setCoverageMode(boolean enabled) {
+        if (Config.coverageMap() == enabled) {
+            return;
+        }
+        Config.setCoverageMap(enabled);
+        Config.save();
     }
 
     /**
@@ -347,7 +377,13 @@ public class GuiMap {
         graphics.setFill(BACKGROUND_COLOR);
         graphics.fillRect(0, 0, width.get(), height.get());
 
-        regionHandler.drawAll(bounds, targetBlocksPerPixel, this::drawRegion);
+        if (Config.coverageMap()) {
+            coverageHandler.drawAll(bounds, this::drawRegion);
+        } else {
+            // also covers the coverage map being turned off from the settings window
+            regionHandler.loadIfNeeded();
+            regionHandler.drawAll(bounds, targetBlocksPerPixel, this::drawRegion);
+        }
 
         drawDebugHighlight(graphics);
     }
@@ -390,7 +426,70 @@ public class GuiMap {
         }
         overlayRenderer.draw(graphics, bounds, blocksPerPixel, getDimension(), hoveredShape);
         markerHandler.draw(bounds, blocksPerPixel, graphics, cursorPos);
+        if (Config.isFleet()) {
+            drawFleet(graphics);
+        }
         drawPlayer(graphics);
+    }
+
+    /**
+     * Draw the bots of the fleet that are in the dimension the map shows, each in its own colour with its name. The
+     * one the map follows is drawn as the player. A bot that isn't saving is grey, a quarantined one is outlined red.
+     */
+    private void drawFleet(GraphicsContext graphics) {
+        PlayerSession focus = WorldManager.getInstance().focus();
+        for (PlayerSession bot : WorldManager.getInstance().getFleetSessions()) {
+            if (bot.getDimension() == null || !bot.getDimension().equals(dimension)) {
+                continue;
+            }
+
+            double botX = (bot.getX() - bounds.getMinX()) / blocksPerPixel;
+            double botZ = (bot.getZ() - bounds.getMinZ()) / blocksPerPixel;
+            Color outline = bot.isQuarantined() ? Color.RED : PLAYER_STROKE;
+
+            if (bot != focus) {
+                playerMarker.transform(botX, botZ, bot.getRotation(), 0.55);
+                graphics.setFillRule(FillRule.NON_ZERO);
+                graphics.setFill(bot.acceptsData() ? botColor(bot) : Color.GRAY);
+                graphics.fillPolygon(playerMarker.getPointsX(), playerMarker.getPointsY(), playerMarker.count());
+                graphics.setStroke(outline);
+                graphics.strokePolygon(playerMarker.getPointsX(), playerMarker.getPointsY(), playerMarker.count());
+            }
+
+            graphics.setStroke(Color.BLACK);
+            graphics.setFill(bot.isQuarantined() ? Color.RED : Color.WHITE);
+            graphics.strokeText(bot.getName(), botX, botZ - 18);
+            graphics.fillText(bot.getName(), botX, botZ - 18);
+        }
+    }
+
+    /**
+     * A colour of its own for every bot, the same each time it connects.
+     */
+    private static Color botColor(PlayerSession bot) {
+        return Color.hsb(Math.floorMod(bot.getName().toLowerCase(Locale.ROOT).hashCode() * 47, 360), .7, .95);
+    }
+
+    /**
+     * Clicking a bot makes the map follow it, and selects it in the Fleet panel.
+     */
+    private void focusBotAt(double x, double z) {
+        if (!Config.isFleet() || bounds == null) {
+            return;
+        }
+        for (PlayerSession bot : WorldManager.getInstance().getFleetSessions()) {
+            if (bot.getDimension() == null || !bot.getDimension().equals(dimension)) {
+                continue;
+            }
+            double botX = (bot.getX() - bounds.getMinX()) / blocksPerPixel;
+            double botZ = (bot.getZ() - bounds.getMinZ()) / blocksPerPixel;
+            if (Math.abs(botX - x) < 12 && Math.abs(botZ - z) < 12) {
+                WorldManager.getInstance().setFocus(bot);
+                followPlayer();
+                FleetPanel.select(bot);
+                return;
+            }
+        }
     }
 
     /**
@@ -499,6 +598,9 @@ public class GuiMap {
     }
 
     public String imageStats() {
+        if (Config.coverageMap()) {
+            return coverageHandler.stats();
+        }
         return regionHandler.stats();
     }
 

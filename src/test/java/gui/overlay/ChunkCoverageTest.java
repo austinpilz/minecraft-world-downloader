@@ -129,6 +129,60 @@ class ChunkCoverageTest {
         assertThat(border.getCoverageText()).isEmpty();
     }
 
+    private static class RecordingListener implements ChunkCoverage.Listener {
+        final List<String> events = new ArrayList<>();
+
+        @Override
+        public void reset(Dimension dimension) {
+            events.add("reset " + dimension);
+        }
+
+        @Override
+        public void chunkSaved(long chunk) {
+            events.add("saved " + (int) (chunk >> 32) + "," + (int) chunk);
+        }
+
+        @Override
+        public void chunkSeen(long chunk) {
+            events.add("seen " + (int) (chunk >> 32) + "," + (int) chunk);
+        }
+    }
+
+    @Test
+    void listenerGetsSeenThenSavedOnce() {
+        ChunkCoverage coverage = new ChunkCoverage();
+        RecordingListener listener = new RecordingListener();
+        coverage.setListener(listener);
+
+        coverage.reset(Dimension.OVERWORLD);
+        coverage.chunkSeen(Dimension.OVERWORLD, new Coordinate2D(3, -4));
+        coverage.chunkSaved(Dimension.OVERWORLD, new Coordinate2D(3, -4));
+        coverage.chunkSaved(Dimension.OVERWORLD, new Coordinate2D(3, -4));
+        // a saved chunk being sent again must not turn it back to grey
+        coverage.chunkSeen(Dimension.OVERWORLD, new Coordinate2D(3, -4));
+        // other dimensions are not drawn
+        coverage.chunkSeen(Dimension.NETHER, new Coordinate2D(0, 0));
+        coverage.update(List.of(), 0);
+
+        assertThat(listener.events).containsExactly("reset minecraft:overworld", "seen 3,-4", "saved 3,-4");
+    }
+
+    @Test
+    void listenerIsResetOnDimensionChange() {
+        ChunkCoverage coverage = new ChunkCoverage();
+        RecordingListener listener = new RecordingListener();
+        coverage.setListener(listener);
+
+        coverage.reset(Dimension.OVERWORLD);
+        coverage.chunkSaved(Dimension.OVERWORLD, new Coordinate2D(1, 1));
+        coverage.reset(Dimension.NETHER);
+        coverage.chunkSaved(Dimension.OVERWORLD, new Coordinate2D(2, 2));
+        coverage.chunkSaved(Dimension.NETHER, new Coordinate2D(1, 1));
+        coverage.update(List.of(), 0);
+
+        assertThat(listener.events).containsExactly("reset minecraft:overworld", "saved 1,1", "reset minecraft:the_nether", "saved 1,1");
+    }
+
     @Test
     void chunksInRegionHeader() {
         byte[] header = new byte[4096];

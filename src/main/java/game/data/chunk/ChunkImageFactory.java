@@ -23,7 +23,6 @@ public class ChunkImageFactory {
     private final Runnable requestImage = this::requestImage;
     ;
     private BiConsumer<Map<ImageMode, Image>, Boolean> onImageDone;
-    private Runnable onSaved;
 
     private final Chunk c;
     private Chunk south;
@@ -51,16 +50,6 @@ public class ChunkImageFactory {
      */
     public void onComplete(BiConsumer<Map<ImageMode, Image>, Boolean> onComplete) {
         this.onImageDone = onComplete;
-    }
-
-    public void onSaved(Runnable onSaved) {
-        this.onSaved = onSaved;
-    }
-
-    public void markSaved() {
-        if (this.onSaved != null) {
-            this.onSaved.run();
-        }
     }
 
     private void registerChunkLoadCallback(CoordinateDim2D coordinates) {

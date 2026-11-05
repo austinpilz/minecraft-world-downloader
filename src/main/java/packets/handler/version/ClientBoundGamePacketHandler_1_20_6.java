@@ -27,6 +27,7 @@ public class ClientBoundGamePacketHandler_1_20_6 extends ClientBoundGamePacketHa
         Map<String, PacketOperator> operators = getOperators();
 
         operators.put("StartConfiguration", dataTypeProvider -> {
+            WorldManager.getInstance().onReconfiguration();
             getConnectionManager().setMode(NetworkMode.CONFIGURATION);
             return true;
         });
@@ -42,6 +43,7 @@ public class ClientBoundGamePacketHandler_1_20_6 extends ClientBoundGamePacketHa
         });
 
         operators.put("Login", provider -> {
+            WorldManager.getInstance().onLogin();
             PacketBuilder replacement = new PacketBuilder(protocol.clientBound("Login"));
 
             replacement.copy(provider, INT, BOOL); /* playerId, hardcore */

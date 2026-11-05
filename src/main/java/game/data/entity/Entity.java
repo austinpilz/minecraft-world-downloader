@@ -131,6 +131,22 @@ public abstract class Entity extends PrimitiveEntity implements IMovableEntity {
         int velZ = provider.readShort();
     }
 
+    /**
+     * Since 1.21.9 velocity is packed into 1 byte when zero, or 6 bytes plus a VarInt for large values. It's not saved
+     * either.
+     */
+    protected static void parsePackedVelocity(DataTypeProvider provider) {
+        int first = provider.readNext() & 0xFF;
+        if (first == 0) {
+            return;
+        }
+        provider.readNext();
+        provider.readInt();
+        if ((first & 4) != 0) {
+            provider.readVarInt();
+        }
+    }
+
     public Integer getId() {
         return id;
     }

@@ -68,6 +68,13 @@ public class ConnectionDetails {
     }
 
     public Socket getClientSocket() throws IOException {
+        return getClientSocket(socksProxy);
+    }
+
+    /**
+     * Connect to the remote server through the given SOCKS proxy, or directly if it's null.
+     */
+    public Socket getClientSocket(SocksProxyDetails socksProxy) throws IOException {
         if (socksProxy == null) {
             return new Socket(host, portRemote);
         }

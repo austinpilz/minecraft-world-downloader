@@ -2,6 +2,7 @@ package game.data.entity;
 
 import config.Config;
 import config.Version;
+import game.data.PlayerSession;
 import game.data.WorldManager;
 import game.data.chunk.Chunk;
 import game.data.coordinates.CoordinateDim2D;
@@ -28,6 +29,8 @@ public class EntityRegistry{
 	private final Map<UUID, PlayerEntity> players;
 	private final Map<CoordinateDim2D, Set<Entity>> perChunk;
 	private final Map<Integer, Entity> entities;
+	// fleet mode only: the bots that can see each entity, it's only forgotten once none of them can
+	private final Map<Integer, Set<PlayerSession>> viewers;
 	private final WorldManager worldManager;
 	private static PlayerReader playerReader;
 	
@@ -38,21 +41,47 @@ public class EntityRegistry{
 		this.perChunk = new ConcurrentHashMap<>();
 		this.entities = new ConcurrentHashMap<>();
 		this.players = new ConcurrentHashMap<>();
+		this.viewers = new ConcurrentHashMap<>();
 		
 		this.executor = Executors.newSingleThreadExecutor(r -> new Thread(r, "Entity Parser Service"));
 		;
 	}
 	
 	/**
+	 * Whether entity updates received by the player of the current thread are used. Unlike chunks these are tracked
+	 * while saving is paused, only a stopped bot's are dropped. Threads without a bot are the single user's.
+	 */
+	private static boolean acceptsEntities() {
+		PlayerSession session = PlayerSession.bound();
+		return session == null || session.acceptsData();
+	}
+
+	/**
+	 * Run the task on the entity thread with the session of the player that received it. Entity packets of a bot
+	 * that stopped saving are dropped.
+	 */
+	private void run(Runnable task) {
+		if(!acceptsEntities()){
+			return;
+		}
+		executor.execute(PlayerSession.capture(task));
+	}
+	
+	/**
 	 * Add a new entity.
 	 */
 	public void addEntity(DataTypeProvider provider, Function<DataTypeProvider, Entity> parser) {
-		this.executor.execute(() -> attempt(() -> {
+		run(() -> attempt(() -> {
 			Entity ent = parser.apply(provider);
 			if(ent == null){
 				return;
 			}
 			entities.put(ent.getId(), ent);
+			
+			PlayerSession session = PlayerSession.bound();
+			if(session != null && session.isFleet()){
+				viewers.computeIfAbsent(ent.getId(), k -> ConcurrentHashMap.newKeySet()).add(session);
+			}
 			
 			ent.registerOnLocationChange((oldPos, newPos) -> {
 				CoordinateDim2D oldChunk = oldPos == null ? null : oldPos.globalToDimChunk();
@@ -87,7 +116,7 @@ public class EntityRegistry{
 	}
 	
 	public void addPlayer(DataTypeProvider provider) {
-		executor.execute(() -> attempt(() -> {
+		run(() -> attempt(() -> {
 			PlayerEntity player = PlayerEntity.parse(provider);
 			players.put(player.getUUID(), player);
 		}));
@@ -99,7 +128,7 @@ public class EntityRegistry{
 	 * @param provider
 	 */
 	public void updatePlayerAction(DataTypeProvider provider) {
-		executor.execute(() -> attempt(() -> {
+		run(() -> attempt(() -> {
 			if(playerReader == null){
 				playerReader = PlayerReader.getVersioned();
 			}
@@ -128,11 +157,12 @@ public class EntityRegistry{
 		
 		for(Entity e : entities){
 			this.entities.remove(e.getId());
+			this.viewers.remove(e.getId());
 		}
 	}
 	
 	public void addMetadata(DataTypeProvider provider) {
-		this.executor.execute(() -> attempt(() -> {
+		run(() -> attempt(() -> {
 			Entity ent = entities.get(provider.readVarInt());
 			
 			if(ent != null){
@@ -142,7 +172,7 @@ public class EntityRegistry{
 	}
 	
 	public void updatePositionRelative(DataTypeProvider provider) {
-		this.executor.execute(() -> attempt(() -> {
+		run(() -> attempt(() -> {
 			IMovableEntity ent = getMovableEntity(provider.readVarInt());
 			
 			if(ent == null){
@@ -169,16 +199,17 @@ public class EntityRegistry{
 	}
 	
 	/**
-	 * EntityPositionSync. From 26.3 the absolute position is sent as a PositionPath: a VarInt type (0 = a single
+	 * EntityPositionSync. Before 26.3 (from 1.21.2) it carries an absolute PositionMoveRotation, which starts with the
+	 * position as three doubles. From 26.3 the absolute position is sent as a PositionPath: a VarInt type (0 = a single
 	 * position, 1 = a list of position + tick offset steps, ending at the entity's current position).
 	 */
 	public void updatePositionSync(DataTypeProvider provider) {
 		if(!Config.versionReporter().isAtLeast(Version.V26_3)){
-			updatePositionRelative(provider);
+			updatePositionAbsolute(provider);
 			return;
 		}
 		
-		this.executor.execute(() -> attempt(() -> {
+		run(() -> attempt(() -> {
 			IMovableEntity ent = getMovableEntity(provider.readVarInt());
 			if(ent == null){
 				return;
@@ -201,7 +232,7 @@ public class EntityRegistry{
 	}
 	
 	public void updatePositionAbsolute(DataTypeProvider provider) {
-		this.executor.execute(() -> attempt(() -> {
+		run(() -> attempt(() -> {
 			IMovableEntity ent = getMovableEntity(provider.readVarInt());
 			
 			if(ent != null){
@@ -233,14 +264,45 @@ public class EntityRegistry{
 		return entities.stream().map(Entity::toNbt).collect(Collectors.toList());
 	}
 	
+	/**
+	 * Forget all entities, the player changed worlds or disconnected. In fleet mode only the entities the bot of
+	 * the current thread could see are forgotten, and only if no other bot can see them.
+	 */
 	public void reset() {
+		PlayerSession session = PlayerSession.bound();
+		if(session != null && session.isFleet()){
+			forgetSession(session);
+			return;
+		}
 		this.entities.clear();
 		this.perChunk.clear();
 		this.players.clear();
+		this.viewers.clear();
+	}
+	
+	/**
+	 * The bot can no longer see any of its entities. Like with destroyEntities, they stay in their chunk until it's
+	 * unloaded.
+	 */
+	public void forgetSession(PlayerSession session) {
+		for(Map.Entry<Integer, Set<PlayerSession>> entry : viewers.entrySet()){
+			Set<PlayerSession> seenBy = entry.getValue();
+			if(seenBy.remove(session) && seenBy.isEmpty()){
+				forget(entry.getKey());
+			}
+		}
+	}
+	
+	private void forget(int id) {
+		viewers.remove(id);
+		Entity ent = entities.remove(id);
+		if(ent != null){
+			players.remove(ent.uuid);
+		}
 	}
 	
 	public void addEquipment(DataTypeProvider provider) {
-		this.executor.execute(() -> attempt(() -> {
+		run(() -> attempt(() -> {
 			int id = provider.readVarInt();
 			Entity ent = entities.get(id);
 			
@@ -255,13 +317,25 @@ public class EntityRegistry{
 	 * when the chunk is unloaded. This way we won't accidentally delete entities that belong to an unsaved chunk.
 	 */
 	public void destroyEntities(DataTypeProvider provider) {
+		if(!acceptsEntities()){
+			return;
+		}
+		PlayerSession session = PlayerSession.bound();
 		try {
 			int count = provider.readVarInt();
 			while (count-- > 0 && provider.hasNext()) {
 				int id = provider.readVarInt();
+				
+				// another bot may still see it
+				Set<PlayerSession> seenBy = viewers.get(id);
+				if (session != null && seenBy != null) {
+					seenBy.remove(session);
+					if (!seenBy.isEmpty()) {
+						continue;
+					}
+				}
 				if (entities.containsKey(id)) {
-					players.remove(entities.get(id).uuid);
-					entities.remove(id);
+					forget(id);
 				}
 			}
 		} catch (RuntimeException ex) {
@@ -281,7 +355,7 @@ public class EntityRegistry{
 	}
 	
 	public void addVillagerTrades(DataTypeProvider provider) {
-		this.executor.execute(() -> attempt(() -> {
+		run(() -> attempt(() -> {
 			worldManager.getVillagerManager().parseAndStoreVillagerTrade(provider);
 		}));
 	}
