@@ -35,6 +35,7 @@ public class BotLogin {
     private final ExitChecker exitChecker;
     private final Function<Account, AuthDetails> authProvider;
     private final Set<String> onlineExitIps = ConcurrentHashMap.newKeySet();
+    private final Set<String> onlineBots = ConcurrentHashMap.newKeySet();
 
     public BotLogin(AccountStore store, ExitChecker exitChecker) {
         this(store, exitChecker, Account::freshAuthDetails);
@@ -48,12 +49,26 @@ public class BotLogin {
 
     /**
      * Check the client name against the bot list and get everything needed to connect for it. On success the exit
-     * IP counts as in use until {@link #release} is called.
+     * IP counts as in use, and the bot as online, until {@link #release} is called. Several clients can log in at
+     * the same time, but not as the same bot.
      */
     public Session login(String clientName) throws Refused {
         BotProfile bot = store.findBot(clientName)
             .orElseThrow(() -> new Refused("\"" + clientName + "\" is not a bot of this proxy."));
 
+        String botKey = bot.getName().toLowerCase(Locale.ROOT);
+        if (!onlineBots.add(botKey)) {
+            throw new Refused("Bot " + bot.getName() + " is already connected.");
+        }
+        try {
+            return login(bot);
+        } catch (Refused | RuntimeException ex) {
+            onlineBots.remove(botKey);
+            throw ex;
+        }
+    }
+
+    private Session login(BotProfile bot) throws Refused {
         Account account = store.findAccount(bot.getAccountId())
             .orElseThrow(() -> new Refused("The account of bot " + bot.getName() + " was removed from the proxy."));
 
@@ -96,6 +111,7 @@ public class BotLogin {
     public void release(Session session) {
         if (session != null) {
             onlineExitIps.remove(session.exitIp());
+            onlineBots.remove(session.botName().toLowerCase(Locale.ROOT));
         }
     }
 
@@ -108,10 +124,13 @@ public class BotLogin {
 
         String key = bot.getExit();
         if (key == null && bot.isAutoExit() && !pool.entries().isEmpty()) {
-            SocksPool.Entry assigned = store.assignExit(bot, pool.entries())
-                .orElseThrow(() -> new Refused("Every exit in the SOCKS pool is already taken by another bot."));
-            store.save();
-            return assigned;
+            // bots logging in at the same time must not be given the same exit
+            synchronized (store) {
+                SocksPool.Entry assigned = store.assignExit(bot, pool.entries())
+                    .orElseThrow(() -> new Refused("Every exit in the SOCKS pool is already taken by another bot."));
+                store.save();
+                return assigned;
+            }
         }
         if (key == null) {
             return null;

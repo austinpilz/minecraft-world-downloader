@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +24,7 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
@@ -88,19 +90,19 @@ public class WorldManager {
     private volatile Long knownWorldSeed;
     private volatile Long pendingWorldSeed;
 
-    private ContainerManager containerManager;
-    private CommandBlockManager commandBlockManager;
-    private VillagerManager villagerManager;
     private DimensionRegistry dimensionCodec;
     private final RenderDistanceExtender renderDistanceExtender;
 
     private BiConsumer<CoordinateDouble3D, Double> playerPosListener;
-    private final CoordinateDouble3D playerPosition;
     private boolean isBelowGround = false;
-    private double playerRotation = 0;
-    private Dimension dimension;
-    private DimensionType dimensionType;
     private final EntityRegistry entityRegistry;
+
+    // the single user's session, also used in fleet mode by threads that don't belong to a bot until one is online
+    private final PlayerSession singleSession;
+    // fleet mode only: the bots that are logged in, and the one the GUI follows
+    private volatile boolean fleet;
+    private final List<PlayerSession> fleetSessions = new CopyOnWriteArrayList<>();
+    private volatile PlayerSession focus;
     private final ChunkFactory chunkFactory;
 
     private ScheduledExecutorService saveService;
@@ -114,8 +116,7 @@ public class WorldManager {
 
         this.levelData = new LevelData(this);
 
-        this.playerPosition = this.levelData.getPlayerPosition();
-        this.dimension = this.levelData.getPlayerDimension();
+        this.singleSession = PlayerSession.single(this.levelData.getPlayerPosition(), this.levelData.getPlayerDimension());
         this.renderDistanceExtender = new RenderDistanceExtender(this);
     }
 
@@ -153,30 +154,174 @@ public class WorldManager {
         this.renderDistanceExtender.setExtendedDistance(val);
     }
 
-    public Dimension getDimension() {
-        return dimension;
+    /**
+     * Run several sessions at once, one per bot. Each bot's packets are handled with its own session bound to the
+     * thread, see {@link PlayerSession}.
+     */
+    public void setFleet(boolean fleet) {
+        this.fleet = fleet;
     }
 
+    public boolean isFleet() {
+        return fleet;
+    }
+
+    /**
+     * The session of the player whose packets the current thread handles. Other threads, like the GUI's, get the
+     * session the GUI follows.
+     */
+    public PlayerSession session() {
+        PlayerSession bound = PlayerSession.bound();
+        return bound != null ? bound : focus();
+    }
+
+    /**
+     * The session the GUI follows: in fleet mode the first bot that logged in, until another one is chosen.
+     */
+    public PlayerSession focus() {
+        PlayerSession focus = this.focus;
+        return focus != null ? focus : singleSession;
+    }
+
+    public void setFocus(PlayerSession session) {
+        if (session == null || !fleetSessions.contains(session)) {
+            return;
+        }
+        this.focus = session;
+        if (session.getDimension() != null) {
+            GuiManager.setDimension(session.getDimension());
+        }
+        notifyPlayerPosListener(session);
+    }
+
+    private boolean isFocus(PlayerSession session) {
+        return session == focus();
+    }
+
+    /**
+     * The bots of the fleet that are logged in.
+     */
+    public List<PlayerSession> getFleetSessions() {
+        return List.copyOf(fleetSessions);
+    }
+
+    /**
+     * A bot of the fleet logged in. Its packets were already handled with the session bound, this makes it count
+     * for unloading chunks and lets the GUI follow it.
+     */
+    public void addFleetSession(PlayerSession session) {
+        fleetSessions.add(session);
+    }
+
+    /**
+     * A bot of the fleet disconnected. Chunks no other bot has loaded are unloaded once saved, and so are the
+     * entities only it could see.
+     */
+    public void endFleetSession(PlayerSession session) {
+        if (!fleetSessions.remove(session)) {
+            return;
+        }
+        if (this.focus == session) {
+            this.focus = fleetSessions.stream().filter(s -> s.getDimension() != null).findFirst().orElse(null);
+            PlayerSession next = focus();
+            if (next.getDimension() != null) {
+                GuiManager.setDimension(next.getDimension());
+            }
+        }
+
+        forgetAllChunks(session);
+        entityRegistry.forgetSession(session);
+    }
+
+    /**
+     * The server told the player of the current thread to forget a chunk. In fleet mode the chunk is only unloaded
+     * when no other bot has it loaded.
+     */
+    public void forgetChunk(CoordinateDim2D coordinate) {
+        PlayerSession session = session();
+        if (!session.isFleet()) {
+            unloadChunk(coordinate);
+            return;
+        }
+        // on the factory thread, so it can't overtake the chunk itself
+        chunkFactory.runOnFactoryThread(PlayerSession.capture(() -> forgetChunk(session, coordinate)));
+    }
+
+    private void forgetChunk(PlayerSession session, CoordinateDim2D coordinate) {
+        session.loadedChunks().remove(coordinate);
+        for (PlayerSession other : fleetSessions) {
+            if (other != session && other.loadedChunks().contains(coordinate)) {
+                return;
+            }
+        }
+        unloadChunk(coordinate);
+    }
+
+    /**
+     * Forget every chunk the bot has loaded, after the chunks it sent before that are parsed.
+     */
+    private void forgetAllChunks(PlayerSession session) {
+        chunkFactory.runOnFactoryThread(PlayerSession.capture(() -> {
+            for (CoordinateDim2D coordinate : List.copyOf(session.loadedChunks())) {
+                forgetChunk(session, coordinate);
+            }
+        }));
+    }
+
+    /**
+     * A chunk received by the player of the current thread was added to the world.
+     */
+    public void chunkReceived(CoordinateDim2D coordinate) {
+        PlayerSession session = PlayerSession.bound();
+        if (session != null && session.isFleet()) {
+            session.chunkLoaded(coordinate);
+        }
+    }
+
+    public Dimension getDimension() {
+        return session().getDimension();
+    }
+
+    /**
+     * Set the dimension the player is in, from a Login or Respawn packet.
+     */
     public void setDimension(Dimension dimension) {
-        if (this.dimension.equals(dimension)) {
+        PlayerSession session = session();
+        Dimension previous = session.getDimension();
+        if (session.isFleet()) {
+            // the server doesn't always tell the bot to forget the chunks it had before a Login or Respawn, so they are
+            // forgotten here, and it sends again the ones the bot still sees
+            forgetAllChunks(session);
+        }
+        if (dimension.equals(previous)) {
             return;
         }
 
-        saveAndUnloadChunks();
-        this.dimension = dimension;
+        if (!session.isFleet()) {
+            unloadDimension(previous);
+        }
+        session.setDimension(dimension);
 
-        this.renderDistanceExtender.reset();
+        if (session.isFleet() && this.focus == null) {
+            this.focus = session;
+        }
+        if (!session.isFleet()) {
+            this.renderDistanceExtender.reset();
+        }
 
-        GuiManager.setDimension(this.dimension);
+        if (isFocus(session)) {
+            GuiManager.setDimension(dimension);
+        }
     }
 
     public void setDimensionType(DimensionType dimensionType) {
-        this.dimensionType = dimensionType;
-        Chunk_1_17.setWorldHeight(dimensionType.getDimensionMinHeight(), dimensionType.getDimensionMaxHeight());
+        PlayerSession session = session();
+        session.setDimensionType(dimensionType);
+        Chunk_1_17.setWorldHeight(session.getDimension(), dimensionType.getDimensionMinHeight(), dimensionType.getDimensionMaxHeight());
     }
 
     private void saveAndUnloadChunks() {
-        unloadDimension(this.dimension);
+        unloadDimension(getDimension());
     }
 
     /**
@@ -185,7 +330,7 @@ public class WorldManager {
      * a region can't be read from disk again before its last chunks are written.
      */
     private void unloadDimension(Dimension dimension) {
-        if (saveService == null) {
+        if (saveService == null || dimension == null) {
             return;
         }
 
@@ -196,16 +341,20 @@ public class WorldManager {
     }
 
     private void checkAboveSurface() {
-        Coordinate3D discrete = this.playerPosition.discretize();
+        PlayerSession session = focus();
+        Coordinate3D discrete = session.getPosition().discretize();
 
         Coordinate3D local = discrete.globalToChunkLocal();
 
-        if (dimension == Dimension.NETHER) {
+        if (session.getDimension() == Dimension.NETHER) {
             isBelowGround = local.getY() < 128;
             return;
         }
 
-        Chunk c = getChunk(discrete.globalToChunk());
+        if (session.getDimension() == null) {
+            return;
+        }
+        Chunk c = getChunk(discrete.globalToChunk().addDimension(session.getDimension()));
         if (c == null || c.getChunkHeightHandler() == null) {
             return;
         }
@@ -215,14 +364,21 @@ public class WorldManager {
     }
 
     public double getPlayerRotation() {
-        return playerRotation;
+        return session().getRotation();
     }
 
     public void setPlayerRotation(double playerRotation) {
-        this.playerRotation = playerRotation;
+        PlayerSession session = session();
+        session.setRotation(playerRotation);
 
+        if (isFocus(session)) {
+            notifyPlayerPosListener(session);
+        }
+    }
+
+    private void notifyPlayerPosListener(PlayerSession session) {
         if (this.playerPosListener != null) {
-            this.playerPosListener.accept(this.playerPosition, this.playerRotation);
+            this.playerPosListener.accept(session.getPosition(), session.getRotation());
         }
     }
 
@@ -231,7 +387,7 @@ public class WorldManager {
      * @param center center region around which to find neighbouring regions
      */
     public void drawExistingChunks(Coordinate2D center) {
-        Collection<McaFile> files = McaFile.getFiles(center, this.dimension, 16).toList();
+        Collection<McaFile> files = McaFile.getFiles(center, getDimension(), 16).toList();
 
         for (McaFile file : files) {
             drawRegion(file);
@@ -239,7 +395,7 @@ public class WorldManager {
     }
 
     public void drawExistingRegion(Coordinate2D coords) {
-        CoordinateDim2D regionCoordinates = coords.addDimension(this.dimension);
+        CoordinateDim2D regionCoordinates = coords.addDimension(getDimension());
         drawRegion(new McaFile(regionCoordinates));
     }
 
@@ -252,7 +408,7 @@ public class WorldManager {
      */
     private void drawRegion(McaFile file) {
         GuiManager.resetRegion(file.getRegionLocation());
-        Map<CoordinateDim2D, Chunk> chunks = file.getParsedChunks(this.dimension);
+        Map<CoordinateDim2D, Chunk> chunks = file.getParsedChunks(getDimension());
 
         // add all chunks to the WorldManager if it doesn't have them yet
         Set<CoordinateDim2D> toDelete = new HashSet<>();
@@ -337,7 +493,7 @@ public class WorldManager {
     }
 
     public Chunk getChunk(Coordinate2D coords) {
-        return getChunk(coords.addDimension(this.dimension));
+        return getChunk(coords.addDimension(getDimension()));
     }
 
     public void unloadChunk(CoordinateDim2D coordinate) {
@@ -353,7 +509,7 @@ public class WorldManager {
     }
 
     public BlockState blockStateAt(Coordinate3D coordinate3D) {
-        Chunk c = this.getChunk(coordinate3D.globalToChunk().addDimension(this.dimension));
+        Chunk c = this.getChunk(coordinate3D.globalToChunk().addDimension(getDimension()));
 
         if (c == null) {
             return null;
@@ -470,11 +626,15 @@ public class WorldManager {
     /**
      * Chunk positions of the players in the given dimension, chunks far from all of them are unloaded once saved.
      */
-    private Collection<Coordinate2D> playerChunks(Dimension dimension) {
-        if (!dimension.equals(this.dimension)) {
-            return List.of();
+    Collection<Coordinate2D> playerChunks(Dimension dimension) {
+        List<PlayerSession> sessions = fleet ? fleetSessions : List.of(singleSession);
+        List<Coordinate2D> chunks = new ArrayList<>();
+        for (PlayerSession session : sessions) {
+            if (dimension.equals(session.getDimension())) {
+                chunks.add(session.getChunkPosition());
+            }
         }
-        return List.of(getPlayerPosition().globalToChunk());
+        return chunks;
     }
 
     /**
@@ -491,25 +651,17 @@ public class WorldManager {
         save(true);
     }
 
+    // these follow the windows a player opens, so every bot has its own
     public ContainerManager getContainerManager() {
-        if (containerManager == null) {
-            containerManager = new ContainerManager();
-        }
-        return containerManager;
+        return session().getContainerManager();
     }
-    
+
     public CommandBlockManager getCommandBlockManager() {
-        if (commandBlockManager == null) {
-            commandBlockManager = new CommandBlockManager();
-        }
-        return commandBlockManager;
+        return session().getCommandBlockManager();
     }
-    
+
     public VillagerManager getVillagerManager() {
-        if (villagerManager == null) {
-            villagerManager = new VillagerManager();
-        }
-        return villagerManager;
+        return session().getVillagerManager();
     }
 
     public void pauseSaving() {
@@ -538,7 +690,7 @@ public class WorldManager {
      * ever dropping (e.g. a hub/network server) - pause saving so the new world's chunks can't get merged into
      * the old world's data at colliding coordinates, until the user confirms they want to keep saving here.
      */
-    public void checkWorldSeed(long seed) {
+    public synchronized void checkWorldSeed(long seed) {
         if (knownWorldSeed == null) {
             knownWorldSeed = readWorldSeedMarker();
         }
@@ -546,6 +698,15 @@ public class WorldManager {
         if (knownWorldSeed == null) {
             knownWorldSeed = seed;
             writeWorldSeedMarker(seed);
+            return;
+        }
+
+        // in fleet mode only the bot that was moved stops saving, the others are still in the right world
+        PlayerSession session = session();
+        if (session.isFleet()) {
+            if (knownWorldSeed != seed) {
+                quarantine(session, "it is in a different world (seed " + seed + " instead of " + knownWorldSeed + ")");
+            }
             return;
         }
 
@@ -559,6 +720,45 @@ public class WorldManager {
         pausedForWorldSwitch = true;
         System.out.println("Auto-paused: a different world was detected");
         GuiManager.setStatusMessage("");
+    }
+
+    /**
+     * The server sent a Login packet. A second one on the same connection means a proxy like Velocity moved the bot
+     * to another server, which may be another world even when its seed is the same.
+     */
+    public void onLogin() {
+        PlayerSession session = session();
+        if (session.markLoggedIn() && session.isFleet()) {
+            quarantine(session, "the server moved it to another server");
+        }
+    }
+
+    /**
+     * The server switched the connection back to the configuration phase, which it does to move the bot to another
+     * server.
+     */
+    public void onReconfiguration() {
+        PlayerSession session = session();
+        if (session.isFleet() && session.isLoggedIn()) {
+            quarantine(session, "the server moved it to another server");
+        }
+    }
+
+    /**
+     * Stop saving what a bot of the fleet receives, until the user resumes it.
+     */
+    public void quarantine(PlayerSession session, String reason) {
+        if (session.quarantine(reason)) {
+            System.out.println("Bot " + session + " stopped saving: " + reason + ". Resume it if this is still the same world, or kick it.");
+        }
+    }
+
+    /**
+     * Whether chunks and changes received by the player of the current thread may go into the world: saving isn't
+     * paused, and in fleet mode the bot hasn't been stopped.
+     */
+    public boolean acceptsData() {
+        return !isPaused && session().acceptsData();
     }
 
     private Path worldSeedMarkerPath() {
@@ -592,11 +792,12 @@ public class WorldManager {
     }
 
     public void deleteAllExisting() {
-        regionStore.clear(this.dimension);
+        Dimension dimension = getDimension();
+        regionStore.clear(dimension);
         chunkFactory.clear();
 
         try {
-            File dir = PathUtils.toPath(Config.getWorldOutputDir(), this.dimension.getPath(), "region").toFile();
+            File dir = PathUtils.toPath(Config.getWorldOutputDir(), dimension.getPath(), "region").toFile();
 
             if (dir.isDirectory()) {
                 FileUtils.cleanDirectory(dir);
@@ -617,17 +818,18 @@ public class WorldManager {
     }
 
     public Coordinate3D getPlayerPosition() {
-        return playerPosition.discretize();
+        return session().getPosition().discretize();
     }
 
     public void setPlayerPosition(double x, double y, double z) {
-        this.playerPosition.setTo(x, y, z);
+        PlayerSession session = session();
+        session.getPosition().setTo(x, y, z);
 
-        if (this.renderDistanceExtender != null) {
+        if (this.renderDistanceExtender != null && !session.isFleet()) {
             this.renderDistanceExtender.updatePlayerPos(getPlayerPosition());
         }
-        if (this.playerPosListener != null) {
-            this.playerPosListener.accept(this.playerPosition, this.playerRotation);
+        if (isFocus(session)) {
+            notifyPlayerPosListener(session);
         }
     }
 
@@ -651,6 +853,7 @@ public class WorldManager {
      */
     public Set<Coordinate2D> sendChunksToPlayer(Collection<Coordinate2D> desired) {
         PacketInjector injector = Config.getPacketInjector();
+        Dimension dimension = getDimension();
         Set<Coordinate2D> loaded = new HashSet<>();
 
         int chunksSent = 0;
@@ -662,13 +865,13 @@ public class WorldManager {
                 continue;
             }
 
-            McaFile mca = loadedFiles.computeIfAbsent(coords.chunkToRegion(), (c) -> McaFile.ofCoords(c.addDimension(this.dimension)));
+            McaFile mca = loadedFiles.computeIfAbsent(coords.chunkToRegion(), (c) -> McaFile.ofCoords(c.addDimension(dimension)));
 
             if (mca == null) {
                 continue;
             }
 
-            CoordinateDim2D withDim = coords.addDimension(this.dimension);
+            CoordinateDim2D withDim = coords.addDimension(dimension);
             ChunkBinary chunkBinary = mca.getChunkBinary(withDim);
 
             // skip any chunks not in the MCA file
@@ -713,6 +916,10 @@ public class WorldManager {
         return loaded;
     }
 
+    /**
+     * The single user's connection was lost. In fleet mode bots end their own session instead, see
+     * {@link #endFleetSession}.
+     */
     public void resetConnection() {
         this.renderDistanceExtender.reset();
         this.entityRegistry.reset();
@@ -745,10 +952,10 @@ public class WorldManager {
     }
 
     public void blockChange(DataTypeProvider provider) {
-        if (!Config.handleBlockChanges() || isPaused) {
+        if (!Config.handleBlockChanges() || !acceptsData()) {
             return;
         }
-        Dimension dimension = this.dimension;
+        Dimension dimension = getDimension();
         chunkFactory.runOnFactoryThread(() -> {
             Coordinate3D coords = provider.readCoordinates();
             Chunk c = getChunk(coords.globalToChunk().addDimension(dimension));
@@ -762,10 +969,10 @@ public class WorldManager {
     }
 
     public void multiBlockChange(Coordinate3D pos, DataTypeProvider provider) {
-        if (!Config.handleBlockChanges() || isPaused) {
+        if (!Config.handleBlockChanges() || !acceptsData()) {
             return;
         }
-        Dimension dimension = this.dimension;
+        Dimension dimension = getDimension();
         chunkFactory.runOnFactoryThread(() -> {
             Chunk c = getChunk(pos.addDimension(dimension));
             if (c == null) {
@@ -782,10 +989,10 @@ public class WorldManager {
      * it is given to the chunk to parse immediately.
      */
     public void updateLight(DataTypeProvider provider) {
-        if (isPaused) {
+        if (!acceptsData()) {
             return;
         }
-        Dimension dimension = this.dimension;
+        Dimension dimension = getDimension();
         chunkFactory.runOnFactoryThread(() -> {
             int chunkX = provider.readVarInt();
             int chunkZ = provider.readVarInt();

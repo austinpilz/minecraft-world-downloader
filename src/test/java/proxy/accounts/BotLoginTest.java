@@ -54,6 +54,27 @@ class BotLoginTest {
     }
 
     @Test
+    void aBotCanOnlyBeConnectedOnce() throws Exception {
+        store.putBot(new BotProfile("Bot1", account.getId(), null, true));
+        BotLogin.Session first = login.login("Bot1");
+
+        assertThatThrownBy(() -> login.login("BOT1"))
+            .isInstanceOf(BotLogin.Refused.class)
+            .hasMessageContaining("already connected");
+
+        login.release(first);
+        assertThat(login.login("bot1").botName()).isEqualTo("Bot1");
+    }
+
+    @Test
+    void refusedLoginDoesntKeepTheBotOnline() {
+        store.putBot(new BotProfile("Bot1", account.getId(), "127.0.0.1:1", false));
+
+        assertThatThrownBy(() -> login.login("Bot1")).hasMessageContaining("not in the SOCKS pool");
+        assertThatThrownBy(() -> login.login("Bot1")).hasMessageContaining("not in the SOCKS pool");
+    }
+
+    @Test
     void botNamesAreCaseInsensitive() throws Exception {
         store.putBot(new BotProfile("Bot1", account.getId(), null, true));
 

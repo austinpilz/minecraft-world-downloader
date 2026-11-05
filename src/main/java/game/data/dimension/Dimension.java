@@ -119,7 +119,7 @@ public class Dimension {
      */
     public void registerType(SpecificTag dimensionNbt) {
         if (Config.versionReporter().isAtLeast(Version.V1_17)) {
-            Chunk_1_17.setWorldHeight(dimensionNbt.get("min_y").intValue(), dimensionNbt.get("height").intValue());
+            Chunk_1_17.setWorldHeight(this, dimensionNbt.get("min_y").intValue(), dimensionNbt.get("height").intValue());
         }
 
         if (this.type != null) {
@@ -177,7 +177,7 @@ public class Dimension {
 
         int minY = type.getProperties().get("min_y").intValue();
         int height = type.getProperties().get("height").intValue();
-        Chunk_1_17.setWorldHeight(minY, height);
+        Chunk_1_17.setWorldHeight(this, minY, height);
 
         // re-write since we write the dimension information on join otherwise
         attempt(() -> write(PathUtils.toPath(Config.getWorldOutputDir(), "datapacks", "downloaded", "data")));

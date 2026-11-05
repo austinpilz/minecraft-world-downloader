@@ -3,6 +3,7 @@ package packets.handler;
 import config.Config;
 import game.NetworkMode;
 import proxy.ConnectionManager;
+import proxy.ProtocolLock;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -27,7 +28,18 @@ public class ServerBoundHandshakePacketHandler extends PacketHandler {
                     break;
             }
 
-            Config.setProtocolVersion(protocolVersion);
+            if (Config.isFleet()) {
+                // all bots share the world and its version, so the first to log in decides which one it is
+                ProtocolLock.Decision decision = Config.fleetProtocol().handshake(protocolVersion, nextMode != 1);
+                if (decision.setVersion()) {
+                    Config.setProtocolVersion(protocolVersion);
+                }
+                if (decision.refusal() != null) {
+                    getConnectionManager().refuseLogin(decision.refusal());
+                }
+            } else {
+                Config.setProtocolVersion(protocolVersion);
+            }
             if (getConnectionManager().isProxyAccounts()) {
                 getConnectionManager().rememberHandshake(protocolVersion, nextMode, getHostExtensions(host));
             } else {

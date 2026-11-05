@@ -1,7 +1,5 @@
 package packets.handler;
 
-import game.protocol.HandshakeProtocol;
-import game.protocol.Protocol;
 import packets.DataProvider;
 import packets.DataTypeProvider;
 import proxy.ConnectionManager;
@@ -14,12 +12,6 @@ import java.util.Map;
  */
 public abstract class PacketHandler {
     private final ConnectionManager connectionManager;
-
-    protected static Protocol protocol = new HandshakeProtocol();
-
-    public static void setProtocol(Protocol protocol) {
-        PacketHandler.protocol = protocol;
-    }
 
     private DataProvider reader;
 
@@ -49,7 +41,7 @@ public abstract class PacketHandler {
 
         int packetID = typeProvider.readVarInt();
 
-        String packetType = protocol.get(packetID, isClientBound());
+        String packetType = connectionManager.getProtocol().get(packetID, isClientBound());
         PacketOperator operator = getOperators().getOrDefault(packetType, null);
         if (operator == null) {
             return true;

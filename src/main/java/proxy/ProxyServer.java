@@ -1,6 +1,8 @@
 package proxy;
 
+import config.Config;
 import game.NetworkMode;
+import game.data.PlayerSession;
 import packets.DataReader;
 
 import java.io.InputStream;
@@ -8,6 +10,7 @@ import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static util.ExceptionHandling.attempt;
@@ -21,6 +24,7 @@ public class ProxyServer extends Thread {
 
     private DataReader onServerBoundPacket;
     private DataReader onClientBoundPacket;
+    private final AtomicInteger fleetClients = new AtomicInteger();
 
     public ProxyServer(ConnectionManager connectionManager, ConnectionDetails connectionDetails) {
         this.connectionDetails = connectionDetails;
@@ -69,8 +73,13 @@ public class ProxyServer extends Thread {
                 // Wait for a connection on the local port
                 client.set(ss.get().accept());
 
+                if (Config.isFleet()) {
+                    runFleetClient(client.get());
+                    return;
+                }
+
                 if (connectionManager.isProxyAccounts()) {
-                    runBotSession(client.get());
+                    runBotSession(connectionManager, client.get(), onServerBoundPacket, onClientBoundPacket);
                     return;
                 }
 
@@ -141,10 +150,28 @@ public class ProxyServer extends Thread {
     }
 
     /**
-     * Handle one client with proxy-held accounts. The client connects offline, and the connection to the server is
-     * only opened once the bot has logged in, since that decides which exit it goes through.
+     * Handle a bot of the fleet on its own thread and connection, so the proxy can accept the next one right away.
      */
-    private void runBotSession(Socket client) throws java.io.IOException {
+    private void runFleetClient(Socket client) {
+        ConnectionManager fleetConnection = connectionManager.newFleetConnection();
+        Thread thread = new Thread(() -> {
+            attempt(() -> runBotSession(
+                fleetConnection, client,
+                fleetConnection.getServerBoundDataReader(), fleetConnection.getClientBoundDataReader()
+            ), (ex) -> attempt(client::close));
+            PlayerSession.bind(null);
+        }, "Fleet Client " + fleetClients.incrementAndGet());
+        thread.setPriority(10);
+        thread.start();
+    }
+
+    /**
+     * Handle one client with proxy-held accounts. The client connects offline, and the connection to the server is
+     * only opened once the bot has logged in, since that decides which exit it goes through. In fleet mode, the
+     * bot's session is bound to both threads reading its packets once it has logged in.
+     */
+    private void runBotSession(ConnectionManager connectionManager, Socket client,
+                               DataReader onServerBoundPacket, DataReader onClientBoundPacket) throws java.io.IOException {
         final InputStream streamFromClient = client.getInputStream();
         final OutputStream streamToClient = client.getOutputStream();
         connectionManager.getEncryptionManager().setStreamToClient(streamToClient);
@@ -173,12 +200,18 @@ public class ProxyServer extends Thread {
                 server.set(socket);
                 connectionManager.getEncryptionManager().setStreamToServer(socket.getOutputStream());
 
+                // the session, if there is one, was just started on the client's thread that is connecting
+                PlayerSession session = connectionManager.getSession();
                 Thread serverListener = new Thread(() -> {
+                    PlayerSession.bind(session);
                     final byte[] reply = new byte[4096];
                     attempt(() -> {
                         InputStream streamFromServer = socket.getInputStream();
                         int bytesRead;
                         while ((bytesRead = streamFromServer.read(reply)) != -1) {
+                            if (session != null) {
+                                session.notePacket();
+                            }
                             onClientBoundPacket.pushData(reply, bytesRead);
                         }
                     }, (ex) -> {
@@ -186,9 +219,10 @@ public class ProxyServer extends Thread {
                             ex.printStackTrace();
                         }
                     });
-                    System.out.println("Server closed the connection.");
+                    System.out.println(session == null ? "Server closed the connection." : "Server closed the connection of " + session + ".");
                     end.run();
-                }, "Proxy Server Listener");
+                    PlayerSession.bind(null);
+                }, session == null ? "Proxy Server Listener" : "Proxy Server Listener " + session);
                 serverListener.setPriority(10);
                 serverListener.start();
             }
@@ -213,7 +247,11 @@ public class ProxyServer extends Thread {
                 ex.printStackTrace();
             }
         });
-        System.out.println("Client closed the connection. Waiting for new connection...");
+        if (connectionManager.isFleet()) {
+            System.out.println("Client of " + (connectionManager.getSession() == null ? "a bot" : connectionManager.getSession()) + " closed the connection.");
+        } else {
+            System.out.println("Client closed the connection. Waiting for new connection...");
+        }
         end.run();
     }
 }

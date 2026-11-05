@@ -29,6 +29,7 @@ import packets.builder.PacketBuilder;
 import proxy.ConnectionDetails;
 import proxy.ConnectionManager;
 import proxy.PacketInjector;
+import proxy.ProtocolLock;
 import proxy.SocksProxyDetails;
 import proxy.accounts.AccountCommands;
 import proxy.accounts.AccountStore;
@@ -45,6 +46,7 @@ public class Config {
 
     private static PacketInjector injector;
     private static Config instance;
+    private static final ProtocolLock fleetProtocol = new ProtocolLock(Config::versionName);
 
     // fields marked transient so they are not written to JSON file
     private transient ProtocolVersionHandler versionHandler;
@@ -54,6 +56,9 @@ public class Config {
     private transient ConnectionDetails connectionDetails;
 
     private transient boolean isStarted = false;
+    private transient Protocol gameProtocol;
+    private transient int gameProtocolVersion;
+    private transient Boolean coverageMapOverride;
     private transient boolean guiOnlyMode = true;
 
     private transient boolean debugWriteChunkNbt;
@@ -299,6 +304,15 @@ public class Config {
         centerX = (centerX >> 9) << 9;
         centerZ = (centerZ >> 9) << 9;
 
+        if (fleet) {
+            WorldManager.getInstance().setFleet(true);
+
+            // rendering what several bots load is too much for the map, and isn't kept in the settings
+            if (coverageMapOverride == null) {
+                coverageMapOverride = true;
+            }
+        }
+
         WorldManager.getInstance().setWorldManagerVariables(markNewChunks, writeChunks());
         WorldManager.getInstance().updateExtendedRenderDistance(extendedRenderDistance);
 
@@ -408,8 +422,15 @@ public class Config {
         }
     }
 
-    public static Protocol getGameProtocol() {
+    public static synchronized Protocol getGameProtocol() {
+        // every bot of a fleet has the same version, so only the first to log in needs the registries loaded
+        if (isFleet() && instance.gameProtocol != null && instance.gameProtocolVersion == instance.protocolVersion) {
+            return instance.gameProtocol;
+        }
+
         Protocol p = instance.versionHandler.getProtocolByProtocolVersion(instance.protocolVersion);
+        instance.gameProtocol = p;
+        instance.gameProtocolVersion = instance.protocolVersion;
         instance.dataVersion = p.getDataVersion();
         instance.gameVersion = p.getVersion();
         instance.versionReporter = new VersionReporter(instance.protocolVersion);
@@ -448,8 +469,28 @@ public class Config {
         Config.injector = injector;
     }
 
+    /**
+     * The injector for the connection of the player whose packets are being handled. In fleet mode each bot has its
+     * own, the single user's connection has the one registered by {@link #registerPacketInjector}.
+     */
     public static PacketInjector getPacketInjector() {
-        return injector;
+        PacketInjector own = WorldManager.getInstance().session().getInjector();
+        return own == null ? injector : own;
+    }
+
+    /**
+     * Keeps a fleet's bots on one game version.
+     */
+    public static ProtocolLock fleetProtocol() {
+        return fleetProtocol;
+    }
+
+    private static String versionName(int protocolVersion) {
+        try {
+            return ProtocolVersionHandler.getInstance().getProtocolByProtocolVersion(protocolVersion).getVersion();
+        } catch (RuntimeException ex) {
+            return "an unknown version";
+        }
     }
 
 
@@ -580,6 +621,10 @@ public class Config {
             usage = "Log bots in with the Microsoft accounts held by the proxy (see --add-account). Clients connect offline using a bot's name, and the proxy joins the server as the bot's account through the bot's SOCKS exit.")
     public boolean proxyAccounts = false;
 
+    @Option(name = "--fleet",
+            usage = "Let several bots connect at once, each with its own connection, all saving into the same world. Implies --proxy-accounts and --coverage-map, and turns off the extended render distance.")
+    public transient boolean fleet = false;
+
     @Option(name = "--add-account",
             usage = "Add a Microsoft account to the proxy with a device code login, then exit.")
     public transient boolean addAccount = false;
@@ -610,7 +655,8 @@ public class Config {
 
     // getters
     public static int getExtendedRenderDistance() {
-        return instance.extendedRenderDistance;
+        // the extender pretends a single player is where it is, which doesn't work with several
+        return isFleet() ? 0 : instance.extendedRenderDistance;
     }
 
     public static long getLevelSeed() {
@@ -676,7 +722,11 @@ public class Config {
     }
 
     public static boolean proxyAccounts() {
-        return instance.proxyAccounts;
+        return instance.proxyAccounts || instance.fleet;
+    }
+
+    public static boolean isFleet() {
+        return instance != null && instance.fleet;
     }
 
     public static String socksPoolFile() {
@@ -692,11 +742,15 @@ public class Config {
     }
 
     public static boolean coverageMap() {
-        return instance.coverageMap;
+        return instance.coverageMapOverride != null ? instance.coverageMapOverride : instance.coverageMap;
     }
 
     public static void setCoverageMap(boolean coverageMap) {
-        instance.coverageMap = coverageMap;
+        if (instance.coverageMapOverride != null) {
+            instance.coverageMapOverride = coverageMap;
+        } else {
+            instance.coverageMap = coverageMap;
+        }
     }
 
     public static List<OverlayEntry> getOverlays() {

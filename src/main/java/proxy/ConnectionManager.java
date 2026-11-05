@@ -2,10 +2,12 @@ package proxy;
 
 import config.Config;
 import game.NetworkMode;
+import game.data.PlayerSession;
 import game.data.WorldManager;
 import game.protocol.ConfigurationProtocol;
 import game.protocol.HandshakeProtocol;
 import game.protocol.LoginProtocol;
+import game.protocol.Protocol;
 import game.protocol.StatusProtocol;
 import java.io.IOException;
 import packets.DataReader;
@@ -26,6 +28,7 @@ public class ConnectionManager {
     private CompressionManager compressionManager;
 
     private NetworkMode mode = NetworkMode.STATUS;
+    private volatile Protocol protocol = new HandshakeProtocol();
 
     // proxy-held accounts only
     private ServerConnector serverConnector;
@@ -34,6 +37,21 @@ public class ConnectionManager {
     private int pendingProtocolVersion;
     private int pendingNextMode;
     private String pendingHostExtension = "";
+    private String pendingRefusal;
+
+    // fleet mode only: this connection is one of several, with its own session once the bot has logged in
+    private final boolean fleet;
+    private volatile PlayerSession session;
+
+    public ConnectionManager() {
+        this.fleet = false;
+    }
+
+    private ConnectionManager(BotLogin botLogin) {
+        this.fleet = true;
+        this.botLogin = botLogin;
+        init();
+    }
 
     /**
      * Opens the connection to the remote server once we know which bot is connecting, since with proxy-held
@@ -54,27 +72,27 @@ public class ConnectionManager {
 
         switch (mode) {
             case STATUS:
-                PacketHandler.setProtocol(new StatusProtocol());
+                protocol = new StatusProtocol();
                 serverBoundDataReader.setPacketHandler(new ServerBoundStatusPacketHandler(this));
                 clientBoundDataReader.setPacketHandler(new ClientBoundStatusPacketHandler(this));
                 break;
             case LOGIN:
-                PacketHandler.setProtocol(new LoginProtocol());
+                protocol = new LoginProtocol();
                 serverBoundDataReader.setPacketHandler(new ServerBoundLoginPacketHandler(this));
                 clientBoundDataReader.setPacketHandler(new ClientBoundLoginPacketHandler(this));
                 break;
             case GAME:
-                PacketHandler.setProtocol(Config.getGameProtocol());
+                protocol = Config.getGameProtocol();
                 serverBoundDataReader.setPacketHandler(new ServerBoundGamePacketHandler(this));
                 clientBoundDataReader.setPacketHandler(ClientBoundGamePacketHandler.of(this));
                 break;
             case HANDSHAKE:
-                PacketHandler.setProtocol(new HandshakeProtocol());
+                protocol = new HandshakeProtocol();
                 serverBoundDataReader.setPacketHandler(new ServerBoundHandshakePacketHandler(this));
                 clientBoundDataReader.setPacketHandler(new ClientBoundHandshakePacketHandler(this));
                 break;
             case CONFIGURATION:
-                PacketHandler.setProtocol(new ConfigurationProtocol());
+                protocol = new ConfigurationProtocol();
                 serverBoundDataReader.setPacketHandler(new ServerBoundConfigurationPacketHandler(this));
                 clientBoundDataReader.setPacketHandler(ClientBoundConfigurationPacketHandler.of(this));
                 break;
@@ -82,15 +100,26 @@ public class ConnectionManager {
     }
 
     /**
-     * Starts the proxy.
+     * The protocol packets are read with, which depends on the connection's current mode.
      */
-    public void startProxy() {
+    public Protocol getProtocol() {
+        return protocol;
+    }
+
+    private void init() {
         compressionManager = new CompressionManager();
         encryptionManager = new EncryptionManager(compressionManager);
         serverBoundDataReader = DataReader.serverBound(encryptionManager);
         clientBoundDataReader = DataReader.clientBound(encryptionManager);
 
         setMode(NetworkMode.HANDSHAKE);
+    }
+
+    /**
+     * Starts the proxy.
+     */
+    public void startProxy() {
+        init();
 
         if (Config.proxyAccounts()) {
             AccountStore store = AccountStore.get();
@@ -100,6 +129,9 @@ public class ConnectionManager {
             botLogin = new BotLogin(store, new ExitChecker());
             System.out.println("Proxy-held accounts: " + store.getBots().size() + " bots. Clients connect offline with a bot's name.");
         }
+        if (Config.isFleet()) {
+            System.out.println("Fleet mode: every bot gets its own connection, and they all save into " + Config.getWorldOutputDir() + ".");
+        }
 
         ProxyServer proxy = new ProxyServer(this, Config.getConnectionDetails());
         proxy.runServer(serverBoundDataReader, clientBoundDataReader);
@@ -108,7 +140,15 @@ public class ConnectionManager {
     }
 
     /**
-     * Reset the connection when its lost.
+     * A new connection for one bot of the fleet, sharing this one's accounts.
+     */
+    public ConnectionManager newFleetConnection() {
+        return new ConnectionManager(botLogin);
+    }
+
+    /**
+     * Reset the connection when its lost. A connection of the fleet only ends its bot's session, the world and the
+     * other bots carry on.
      */
     public void reset() {
         if (botLogin != null) {
@@ -120,11 +160,47 @@ public class ConnectionManager {
         serverBoundDataReader.reset();
         clientBoundDataReader.reset();
         setMode(NetworkMode.HANDSHAKE);
-        WorldManager.getInstance().resetConnection();
+
+        if (fleet) {
+            PlayerSession ended = session;
+            session = null;
+            if (ended != null) {
+                WorldManager.getInstance().endFleetSession(ended);
+                System.out.println("Bot " + ended + " disconnected, " + WorldManager.getInstance().getFleetSessions().size() + " still online.");
+            }
+        } else {
+            WorldManager.getInstance().resetConnection();
+        }
     }
 
     public boolean isProxyAccounts() {
         return botLogin != null;
+    }
+
+    public boolean isFleet() {
+        return fleet;
+    }
+
+    /**
+     * The session of this connection's bot in fleet mode, null before it has logged in.
+     */
+    public PlayerSession getSession() {
+        return session;
+    }
+
+    public DataReader getServerBoundDataReader() {
+        return serverBoundDataReader;
+    }
+
+    public DataReader getClientBoundDataReader() {
+        return clientBoundDataReader;
+    }
+
+    /**
+     * Refuse the client once it tries to log in, for example because it uses another version than the fleet.
+     */
+    public void refuseLogin(String reason) {
+        this.pendingRefusal = reason;
     }
 
     public void setServerConnector(ServerConnector serverConnector) {
@@ -150,6 +226,11 @@ public class ConnectionManager {
      * log in there with the bot's account. A client that isn't a bot is disconnected.
      */
     public void loginAsBot(String clientName) {
+        if (pendingRefusal != null) {
+            refuseClient(pendingRefusal);
+            return;
+        }
+
         BotLogin.Session session;
         try {
             session = botLogin.login(clientName);
@@ -158,6 +239,10 @@ public class ConnectionManager {
             return;
         }
         botSession = session;
+
+        if (fleet) {
+            startFleetSession(session);
+        }
 
         System.out.println("Bot " + session.botName() + " logs in as " + session.account().getUsername()
             + (session.exit() == null ? " connecting directly." : " through " + session.exit().getFriendlyHost() + " (exit IP " + session.exitIp() + ")."));
@@ -172,6 +257,21 @@ public class ConnectionManager {
             botSession = null;
             refuseClient("Cannot connect to " + Config.getConnectionDetails().getFriendlyHost() + ": " + ex.getMessage());
         }
+    }
+
+    /**
+     * Give the bot its own session. This runs on the thread reading from the client, the thread reading from the
+     * server binds it when it starts.
+     */
+    private void startFleetSession(BotLogin.Session login) {
+        PlayerSession started = PlayerSession.fleet(login.botName());
+        started.setInjector(encryptionManager.getPacketInjector());
+        started.setExitIp(login.exitIp());
+        started.setKick(() -> serverConnector.disconnectClient());
+        PlayerSession.bind(started);
+
+        session = started;
+        WorldManager.getInstance().addFleetSession(started);
     }
 
     /**

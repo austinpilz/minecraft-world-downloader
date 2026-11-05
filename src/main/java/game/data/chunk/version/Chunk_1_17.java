@@ -3,27 +3,55 @@ package game.data.chunk.version;
 import config.Config;
 import game.data.chunk.ChunkSection;
 import game.data.coordinates.CoordinateDim2D;
+import game.data.dimension.Dimension;
 import game.protocol.Protocol;
 import java.util.BitSet;
 import java.util.InputMismatchException;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import javafx.util.Pair;
 import packets.DataTypeProvider;
 import packets.builder.PacketBuilder;
 
 public class Chunk_1_17 extends Chunk_1_16 {
-    static int minBlockSectionY = 0;
-    static int maxBlockSectionY = 15;
-    static int fullHeight;
+    // lowest and highest block section. Bots of a fleet can be in different dimensions at once, so each dimension
+    // keeps its own; dimensions that haven't been seen use the range set last.
+    private static volatile int[] defaultSectionRange = { 0, 15 };
+    private static final Map<Dimension, int[]> sectionRanges = new ConcurrentHashMap<>();
 
     public Chunk_1_17(CoordinateDim2D location, int version) {
         super(location, version);
     }
 
+    /**
+     * Set the height of every dimension.
+     */
     public static void setWorldHeight(int min_y, int height) {
-        fullHeight = height;
-        minBlockSectionY = min_y >> 4;
-        maxBlockSectionY = minBlockSectionY + (height >> 4) - 1;
+        sectionRanges.clear();
+        defaultSectionRange = sectionRange(min_y, height);
+    }
+
+    /**
+     * Set the height of the given dimension, which also becomes the height of dimensions that haven't been seen.
+     */
+    public static void setWorldHeight(Dimension dimension, int min_y, int height) {
+        int[] range = sectionRange(min_y, height);
+        defaultSectionRange = range;
+        if (dimension != null) {
+            sectionRanges.put(dimension, range);
+        }
+    }
+
+    private static int[] sectionRange(int min_y, int height) {
+        int min = min_y >> 4;
+        return new int[] { min, min + (height >> 4) - 1 };
+    }
+
+    private int[] sectionRange() {
+        Dimension dimension = location == null ? null : location.getDimension();
+        int[] range = dimension == null ? null : sectionRanges.get(dimension);
+        return range != null ? range : defaultSectionRange;
     }
 
     /**
@@ -167,22 +195,22 @@ public class Chunk_1_17 extends Chunk_1_16 {
 
     @Override
     protected int getMinLightSection() {
-        return minBlockSectionY - 1;
+        return sectionRange()[0] - 1;
     }
 
     @Override
     protected int getMinBlockSection() {
-        return minBlockSectionY;
+        return sectionRange()[0];
     }
 
     @Override
     protected int getMaxBlockSection() {
-        return maxBlockSectionY;
+        return sectionRange()[1];
     }
 
     @Override
     protected int getMaxLightSection() {
-        return maxBlockSectionY + 1;
+        return sectionRange()[1] + 1;
     }
 
     @Override
