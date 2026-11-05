@@ -169,12 +169,13 @@ public class EntityRegistry{
 	}
 	
 	/**
-	 * EntityPositionSync. From 26.3 the absolute position is sent as a PositionPath: a VarInt type (0 = a single
+	 * EntityPositionSync. Before 26.3 (from 1.21.2) it carries an absolute PositionMoveRotation, which starts with the
+	 * position as three doubles. From 26.3 the absolute position is sent as a PositionPath: a VarInt type (0 = a single
 	 * position, 1 = a list of position + tick offset steps, ending at the entity's current position).
 	 */
 	public void updatePositionSync(DataTypeProvider provider) {
 		if(!Config.versionReporter().isAtLeast(Version.V26_3)){
-			updatePositionRelative(provider);
+			updatePositionAbsolute(provider);
 			return;
 		}
 		

@@ -122,6 +122,33 @@ class EntityRegistryMovementTest {
         verify(entity, timeout(1000)).incrementPosition(30, -3, 3);
     }
 
+    /**
+     * Before 26.3 the packet is ClientboundEntityPositionSyncPacket with a PositionMoveRotation: position (3 doubles),
+     * delta movement (3 doubles), yRot and xRot (floats), then onGround.
+     */
+    @Test
+    void absolutePositionSyncBefore26_3() throws Exception {
+        Entity entity = setUp(Version.V26_1_2);
+        CompletableFuture<double[]> read = capturePosition(entity);
+        EntityRegistry registry = registryWith(entity);
+
+        PacketBuilder builder = new PacketBuilder(0x00);
+        builder.writeVarInt(ENTITY_ID);
+        writeDouble(builder, -1234.5);
+        writeDouble(builder, 70.25);
+        writeDouble(builder, 9876.125);
+        writeDouble(builder, 0.1);
+        writeDouble(builder, -0.08);
+        writeDouble(builder, 0);
+        builder.writeInt(Float.floatToIntBits(90f));
+        builder.writeInt(Float.floatToIntBits(-10f));
+        builder.writeBoolean(true);
+
+        registry.updatePositionSync(parse(builder));
+        assertThat(read.get(1, TimeUnit.SECONDS)).containsExactly(-1234.5, 70.25, 9876.125);
+        verify(entity, never()).incrementPosition(anyInt(), anyInt(), anyInt());
+    }
+
     @Test
     void linearPositionSync26_3() throws Exception {
         Entity entity = setUp(Version.V26_3);
