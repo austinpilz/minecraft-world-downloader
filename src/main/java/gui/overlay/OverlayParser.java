@@ -7,11 +7,15 @@ import com.google.gson.JsonParser;
 import java.io.Reader;
 import java.io.StringReader;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 import javafx.scene.paint.Color;
 
 /**
@@ -26,6 +30,9 @@ import javafx.scene.paint.Color;
  *   {"type": "point", "at": [x, z], "label": "..."}
  * ]}
  * </pre>
+ * Shapes named as a world border, or in a set named that way, show the X and Z axes. In the minimal format a shape
+ * can turn this on or off itself with {@code "axes": true} or {@code false}.
+ * <p>
  * Entries that can't be read are skipped and counted, rather than failing the whole file.
  */
 public class OverlayParser {
@@ -78,7 +85,12 @@ public class OverlayParser {
     private static final double DYNMAP_FILL_OPACITY = 0.35;
     private static final double DYNMAP_WEIGHT = 3;
 
+    // "World border", "worldborder", "world_borders", ...
+    private static final Pattern WORLD_BORDER_NAME = Pattern.compile("(?i)world[\\s_-]*borders?");
+
     private int skipped;
+    // shapes with an "axes" field, which overrides the world border detection
+    private final Set<OverlayShape> explicitAxes = Collections.newSetFromMap(new IdentityHashMap<>());
 
     private OverlayParser() { }
 
@@ -98,16 +110,41 @@ public class OverlayParser {
         JsonObject obj = root.getAsJsonObject();
 
         OverlayParser parser = new OverlayParser();
+        Format format;
+        List<OverlaySet> sets;
         if (obj.has("shapes") && obj.get("shapes").isJsonArray()) {
-            return new Result(Format.NATIVE, parser.parseNative(obj.getAsJsonArray("shapes")), parser.skipped);
+            format = Format.NATIVE;
+            sets = parser.parseNative(obj.getAsJsonArray("shapes"));
+        } else if (obj.has("sets") && obj.get("sets").isJsonObject()) {
+            format = Format.DYNMAP;
+            sets = parser.parseDynmap(obj.getAsJsonObject("sets"));
+        } else if (isBlueMap(obj)) {
+            format = Format.BLUEMAP;
+            sets = parser.parseBlueMap(obj);
+        } else {
+            throw new IllegalArgumentException("Not a BlueMap, Dynmap or overlay shapes file");
         }
-        if (obj.has("sets") && obj.get("sets").isJsonObject()) {
-            return new Result(Format.DYNMAP, parser.parseDynmap(obj.getAsJsonObject("sets")), parser.skipped);
+        parser.markWorldBorders(sets);
+        return new Result(format, sets, parser.skipped);
+    }
+
+    /**
+     * Shapes in a world border set, or named as a world border, show the X and Z axes so the quadrants of the world
+     * can be told apart. Shapes that say whether to show the axes themselves are left alone.
+     */
+    private void markWorldBorders(List<OverlaySet> sets) {
+        for (OverlaySet set : sets) {
+            boolean borderSet = isWorldBorderName(set.getId()) || isWorldBorderName(set.getLabel());
+            for (OverlayShape shape : set.getShapes()) {
+                if (!explicitAxes.contains(shape) && (borderSet || isWorldBorderName(shape.getLabel()))) {
+                    shape.withAxes(true);
+                }
+            }
         }
-        if (isBlueMap(obj)) {
-            return new Result(Format.BLUEMAP, parser.parseBlueMap(obj), parser.skipped);
-        }
-        throw new IllegalArgumentException("Not a BlueMap, Dynmap or overlay shapes file");
+    }
+
+    static boolean isWorldBorderName(String name) {
+        return name != null && WORLD_BORDER_NAME.matcher(name).find();
     }
 
     private static boolean isBlueMap(JsonObject obj) {
@@ -322,7 +359,14 @@ public class OverlayParser {
         } else {
             fill = Color.color(stroke.getRed(), stroke.getGreen(), stroke.getBlue(), 0.15);
         }
-        return shape.withStyle(stroke, fill, number(obj, "width", 2)).withLabel(stripHtml(string(obj, "label")));
+        shape.withStyle(stroke, fill, number(obj, "width", 2)).withLabel(stripHtml(string(obj, "label")));
+
+        JsonElement axes = obj.get("axes");
+        if (axes != null && axes.isJsonPrimitive() && axes.getAsJsonPrimitive().isBoolean()) {
+            shape.withAxes(axes.getAsBoolean());
+            explicitAxes.add(shape);
+        }
+        return shape;
     }
 
     private static double[][] pairs(JsonArray arr) {

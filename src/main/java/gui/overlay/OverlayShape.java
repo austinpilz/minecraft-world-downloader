@@ -28,6 +28,8 @@ public class OverlayShape {
     private Color stroke = DEFAULT_STROKE;
     private Color fill = DEFAULT_FILL;
     private double lineWidth = 2;
+    // draw the X and Z axes inside this shape, used for world borders
+    private boolean showAxes;
 
     private double labelX;
     private double labelZ;
@@ -114,6 +116,18 @@ public class OverlayShape {
         this.fill = fill;
         this.lineWidth = Math.max(1, Math.min(lineWidth, 8));
         return this;
+    }
+
+    /**
+     * Draw the X and Z axes (the lines x = 0 and z = 0) inside this shape. Only shapes with an area can show them.
+     */
+    OverlayShape withAxes(boolean showAxes) {
+        this.showAxes = showAxes && (kind == Kind.POLYGON || kind == Kind.CIRCLE);
+        return this;
+    }
+
+    public boolean isShowAxes() {
+        return showAxes;
     }
 
     OverlayShape withLabelPosition(double x, double z) {

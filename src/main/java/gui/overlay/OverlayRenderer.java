@@ -30,6 +30,13 @@ public class OverlayRenderer {
     private static final Color CHUNK_GRID_COLOR = Color.rgb(255, 255, 255, .45);
     private static final Color CAPTURED_STROKE = Color.web("#33dd55");
     private static final Color CAPTURED_FILL = Color.web("#33dd55", 0.3);
+    private static final Color AXIS_COLOR = Color.rgb(255, 255, 255, .3);
+    private static final Color AXIS_LABEL_COLOR = Color.rgb(255, 255, 255, .55);
+    private static final Font AXIS_LABEL_FONT = Font.font(null, FontWeight.BOLD, 11);
+    private static final double AXIS_DASH = 8;
+    // distances in pixels: from the end of an axis to its label, and from the line to the label
+    private static final double AXIS_LABEL_INSET = 14;
+    private static final double AXIS_LABEL_SIDE = 12;
 
     private final OverlayManager manager;
     private final List<OverlayShape> visible = new ArrayList<>();
@@ -63,6 +70,12 @@ public class OverlayRenderer {
         graphics.setFillRule(FillRule.EVEN_ODD);
         graphics.setLineJoin(StrokeLineJoin.ROUND);
 
+        // axes go underneath all shapes, they're only a faint guide
+        for (OverlayShape shape : visible) {
+            if (shape.isShowAxes()) {
+                drawAxes(graphics, shape);
+            }
+        }
         for (OverlayShape shape : visible) {
             drawShape(graphics, shape, false);
         }
@@ -164,20 +177,12 @@ public class OverlayRenderer {
             return;
         }
 
-        graphics.save();
-        switch (shape.getKind()) {
-            case POLYGON -> tracePolygon(graphics, shape);
-            case CIRCLE -> {
-                graphics.beginPath();
-                graphics.arc(screenX(shape.getX()[0]), screenZ(shape.getZ()[0]),
-                             shape.getRadiusX() / blocksPerPixel, shape.getRadiusZ() / blocksPerPixel, 0, 360);
-                graphics.closePath();
-            }
-            default -> {
-                graphics.restore();
-                return;
-            }
+        if (shape.getKind() != OverlayShape.Kind.POLYGON && shape.getKind() != OverlayShape.Kind.CIRCLE) {
+            return;
         }
+
+        graphics.save();
+        tracePath(graphics, shape);
         graphics.clip();
 
         double minX = Math.max(shape.getMinX(), bounds.getMinX());
@@ -194,6 +199,99 @@ public class OverlayRenderer {
             graphics.strokeLine(screenX(minX), screenZ(z), screenX(maxX), screenZ(z));
         }
         graphics.restore();
+    }
+
+    /**
+     * Draw faint lines along x = 0 and z = 0 inside the shape, splitting a world border into its four quadrants. Each
+     * half of an axis is labelled (+X, -X, +Z, -Z) at the end that's furthest out on screen.
+     */
+    private void drawAxes(GraphicsContext graphics, OverlayShape shape) {
+        if (!shape.contains(0, 0, 0)) {
+            return;
+        }
+
+        graphics.save();
+        tracePath(graphics, shape);
+        graphics.clip();
+        graphics.setStroke(AXIS_COLOR);
+        graphics.setLineWidth(1);
+        graphics.setLineDashes(AXIS_DASH, AXIS_DASH);
+        graphics.strokeLine(screenX(shape.getMinX()), screenZ(0), screenX(shape.getMaxX()), screenZ(0));
+        graphics.strokeLine(screenX(0), screenZ(shape.getMinZ()), screenX(0), screenZ(shape.getMaxZ()));
+        graphics.restore();
+
+        graphics.save();
+        graphics.setFont(AXIS_LABEL_FONT);
+        graphics.setTextAlign(TextAlignment.CENTER);
+        graphics.setTextBaseline(VPos.CENTER);
+        graphics.setFill(AXIS_LABEL_COLOR);
+        drawAxisLabel(graphics, shape, "+X", 1, 0);
+        drawAxisLabel(graphics, shape, "-X", -1, 0);
+        drawAxisLabel(graphics, shape, "+Z", 0, 1);
+        drawAxisLabel(graphics, shape, "-Z", 0, -1);
+        graphics.restore();
+    }
+
+    /**
+     * Label one half of an axis, going from the origin in the given direction. The label is placed where that half
+     * leaves the screen or reaches the edge of the shape, whichever comes first.
+     */
+    private void drawAxisLabel(GraphicsContext graphics, OverlayShape shape, String label, int dx, int dz) {
+        // the axis has to be on screen
+        if (dx == 0 ? (0 < bounds.getMinX() || 0 > bounds.getMaxX()) : (0 < bounds.getMinZ() || 0 > bounds.getMaxZ())) {
+            return;
+        }
+
+        double toScreenEdge = switch (dx + 2 * dz) {
+            case 1 -> bounds.getMaxX();
+            case -1 -> -bounds.getMinX();
+            case 2 -> bounds.getMaxZ();
+            default -> -bounds.getMinZ();
+        };
+        double toShapeEdge = switch (dx + 2 * dz) {
+            case 1 -> shape.getMaxX();
+            case -1 -> -shape.getMinX();
+            case 2 -> shape.getMaxZ();
+            default -> -shape.getMinZ();
+        };
+        double end = Math.min(toScreenEdge, toShapeEdge);
+
+        // shapes that aren't rectangles may end before their bounding box does
+        if (!shape.contains(end * dx, end * dz, 0)) {
+            double inside = 0, outside = end;
+            for (int i = 0; i < 40 && outside - inside > blocksPerPixel; i++) {
+                double mid = (inside + outside) / 2;
+                if (shape.contains(mid * dx, mid * dz, 0)) {
+                    inside = mid;
+                } else {
+                    outside = mid;
+                }
+            }
+            end = inside;
+        }
+
+        double inset = AXIS_LABEL_INSET * blocksPerPixel;
+        if (end < inset * 2) {
+            return;
+        }
+        double x = screenX((end - inset) * dx);
+        double y = screenZ((end - inset) * dz);
+        // keep the label next to the line rather than on top of it
+        graphics.fillText(label, x + (dx == 0 ? AXIS_LABEL_SIDE : 0), y + (dz == 0 ? -AXIS_LABEL_SIDE : 0));
+    }
+
+    /**
+     * Trace the outline of a shape with an area as the current path, e.g. to clip to it.
+     */
+    private void tracePath(GraphicsContext graphics, OverlayShape shape) {
+        if (shape.getKind() == OverlayShape.Kind.CIRCLE) {
+            graphics.beginPath();
+            graphics.arc(screenX(shape.getX()[0]), screenZ(shape.getZ()[0]),
+                         shape.getRadiusX() / blocksPerPixel, shape.getRadiusZ() / blocksPerPixel, 0, 360);
+            graphics.closePath();
+        } else {
+            tracePolygon(graphics, shape);
+        }
     }
 
     private boolean fitsLabel(OverlayShape shape) {
