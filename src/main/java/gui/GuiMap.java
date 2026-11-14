@@ -6,6 +6,7 @@ import game.data.coordinates.Coordinate2D;
 import game.data.coordinates.CoordinateDim2D;
 import game.data.coordinates.CoordinateDouble2D;
 import game.data.coordinates.CoordinateDouble3D;
+import game.data.SessionStats;
 import game.data.WorldManager;
 import game.data.chunk.Chunk;
 import game.data.dimension.Dimension;
@@ -16,8 +17,11 @@ import gui.markers.PlayerMarker;
 import gui.overlay.OverlayManager;
 import gui.overlay.OverlayRenderer;
 import gui.overlay.OverlayShape;
+import javafx.animation.Animation;
 import javafx.animation.AnimationTimer;
+import javafx.animation.KeyFrame;
 import javafx.animation.PauseTransition;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyDoubleProperty;
 import javafx.fxml.FXML;
@@ -37,6 +41,10 @@ import javafx.scene.text.TextAlignment;
 import javafx.util.Duration;
 
 import java.util.Collection;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import util.PathUtils;
 import util.PrintUtils;
 
 /**
@@ -57,6 +65,10 @@ public class GuiMap {
     public Label coordsLabel;
     public Button playerLockButton;
     public Label statusLabel;
+    public Label statsLabel;
+
+    // size of the world folder, measured on a background thread as walking the folder can take a moment
+    private volatile long worldSizeBytes = -1;
 
     private CoordinateDouble3D playerPos;
     private Coordinate2D cursorPos;
@@ -143,6 +155,56 @@ public class GuiMap {
         setupContextMenu();
         setupHelpLabel();
         setupDragging();
+        setupStatsLabel();
+    }
+
+    /**
+     * Show the world's size on disk, the rate chunks are coming in at and how long the session has been running in
+     * the bottom right corner, updated every second.
+     */
+    private void setupStatsLabel() {
+        statsLabel.setMouseTransparent(true);
+
+        ScheduledExecutorService sizeService = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "World Size Monitor");
+            t.setDaemon(true);
+            return t;
+        });
+        sizeService.scheduleWithFixedDelay(() -> {
+            if (Config.showSessionStats()) {
+                worldSizeBytes = SessionStats.directorySize(PathUtils.toPath(Config.getWorldOutputDir()));
+            }
+        }, 0, 5, TimeUnit.SECONDS);
+
+        Timeline timeline = new Timeline(new KeyFrame(Duration.seconds(1), e -> updateStatsLabel()));
+        timeline.setCycleCount(Animation.INDEFINITE);
+        timeline.play();
+        updateStatsLabel();
+    }
+
+    private void updateStatsLabel() {
+        boolean show = Config.showSessionStats();
+        statsLabel.setVisible(show);
+        if (!show) {
+            return;
+        }
+
+        WorldManager manager = WorldManager.getInstance();
+        SessionStats stats = manager.getSessionStats();
+
+        String size = worldSizeBytes < 0 ? "..." : SessionStats.formatSize(worldSizeBytes);
+        String rate = String.format("%.1f chunks/s", stats.chunksPerSecond());
+        long sessionMillis = stats.sessionMillis();
+        String session;
+        if (sessionMillis >= 0) {
+            session = SessionStats.formatDuration(sessionMillis);
+        } else if (manager.isPaused()) {
+            session = "paused";
+        } else {
+            session = "-:--:--";
+        }
+
+        statsLabel.setText(size + "  |  " + rate + "  |  " + session);
     }
 
     private void setupHelpLabel() {

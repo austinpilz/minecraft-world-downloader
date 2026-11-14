@@ -547,6 +547,7 @@ public class Config {
 
     // managed from the map's right-click menu
     public boolean showPlayerCoordinates = true;
+    public boolean showSessionStats = true;
 
     // getters
     public static int getExtendedRenderDistance() {
@@ -641,6 +642,14 @@ public class Config {
 
     public static void setShowPlayerCoordinates(boolean showPlayerCoordinates) {
         instance.showPlayerCoordinates = showPlayerCoordinates;
+    }
+
+    public static boolean showSessionStats() {
+        return instance.showSessionStats;
+    }
+
+    public static void setShowSessionStats(boolean showSessionStats) {
+        instance.showSessionStats = showSessionStats;
     }
 
     public static boolean overlayChunkGrid() {

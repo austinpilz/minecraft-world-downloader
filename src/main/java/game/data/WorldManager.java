@@ -106,6 +106,7 @@ public class WorldManager {
     private ScheduledExecutorService saveService;
 
     private final MissingChunkDetector missingChunkDetector = new MissingChunkDetector();
+    private final SessionStats sessionStats = new SessionStats();
     private ScheduledExecutorService missingChunkService;
     // view distance the server told us it uses, 0 if not known yet
     private volatile int serverViewDistance;
@@ -525,6 +526,7 @@ public class WorldManager {
 
     public void pauseSaving() {
         isPaused = true;
+        sessionStats.endSession();
         System.out.println("Pausing");
     }
 
@@ -536,6 +538,7 @@ public class WorldManager {
         }
         isPaused = false;
         pausedForWorldSwitch = false;
+        sessionStats.startSession();
         System.out.println("Resuming");
     }
 
@@ -568,6 +571,7 @@ public class WorldManager {
         saveAndUnloadChunks();
         isPaused = true;
         pausedForWorldSwitch = true;
+        sessionStats.endSession();
         System.out.println("Auto-paused: a different world was detected");
         GuiManager.setStatusMessage("");
     }
@@ -849,6 +853,11 @@ public class WorldManager {
      */
     public void chunkReceived(CoordinateDim2D chunk) {
         missingChunkDetector.chunkReceived(chunk);
+        sessionStats.chunkReceived(isPaused);
+    }
+
+    public SessionStats getSessionStats() {
+        return sessionStats;
     }
 
     /**

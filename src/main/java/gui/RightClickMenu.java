@@ -129,6 +129,14 @@ public class RightClickMenu extends ContextMenu {
         });
         menu.add(playerCoordsItem);
 
+        CheckMenuItem statsItem = new CheckMenuItem("Show session stats");
+        statsItem.setSelected(Config.showSessionStats());
+        statsItem.setOnAction(e -> {
+            Config.setShowSessionStats(statsItem.isSelected());
+            Config.save();
+        });
+        menu.add(statsItem);
+
         menu.add(new Menu("Render mode", null, renderModes.toArray(new MenuItem[0])));
         menu.add(overlayMenu);
         menu.add(construct("Settings", e -> GuiManager.loadWindowSettings()));
