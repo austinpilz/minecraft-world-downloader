@@ -3,6 +3,7 @@ package game.data.chunk.version;
 import config.Config;
 import config.Version;
 import game.data.chunk.BlockEntityRegistry;
+import game.data.chunk.ChunkParseDiagnostics;
 import game.data.chunk.ChunkSection;
 import game.data.chunk.palette.BlockState;
 import game.data.chunk.palette.BlockRegistry;
@@ -25,6 +26,9 @@ import se.llbit.nbt.StringTag;
 import se.llbit.nbt.Tag;
 
 public class Chunk_1_18 extends Chunk_1_17 {
+    // total block count of the sections in the most recently received chunk packet
+    private int receivedBlockCount;
+
     public Chunk_1_18(CoordinateDim2D location, int version) {
         super(location, version);
     }
@@ -51,21 +55,26 @@ public class Chunk_1_18 extends Chunk_1_17 {
     protected void parse(DataTypeProvider dataProvider) {
         raiseEvent("parse from packet");
 
-        parseHeightMaps(dataProvider);
-        
-        // https://minecraft.wiki/w/Java_Edition_protocol/Chunk_format#Data_structure
-        int size = dataProvider.readVarInt();
-        
+        String stage = "heightmaps";
         try {
-            readChunkColumn(dataProvider.ofLength(size));
+            parseHeightMaps(dataProvider);
 
+            // https://minecraft.wiki/w/Java_Edition_protocol/Chunk_format#Data_structure
+            stage = "block sections";
+            int size = dataProvider.readVarInt();
+            receivedBlockCount = 0;
+            readChunkColumn(dataProvider.ofLength(size));
+            if (receivedBlockCount == 0) {
+                ChunkParseDiagnostics.emptyChunk(location, dataProvider);
+            }
+
+            stage = "block entities";
             parseBlockEntities(dataProvider);
 
+            stage = ChunkParseDiagnostics.STAGE_LIGHT;
             updateLight(dataProvider);
         } catch (Exception ex) {
-            // seems to happen when there's blocks above 192 under some conditions
-            System.out.println("Issue parse chunk at " + location + ". Cause: " + ex.getMessage());
-            ex.printStackTrace();
+            ChunkParseDiagnostics.failure(location, stage, ex, dataProvider);
         }
 
         afterParse();
@@ -201,6 +210,7 @@ public class Chunk_1_18 extends Chunk_1_17 {
             ChunkSection_1_18 section = (ChunkSection_1_18) getChunkSection(sectionY);
 
             int blockCount = dataProvider.readShort();
+            receivedBlockCount += blockCount;
 
             // 26.1+ (protocol 775+) added a fluid count field right after block count.
             if (Config.versionReporter().isAtLeast(Version.V26_1_2)) {

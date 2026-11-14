@@ -4,6 +4,7 @@ import packets.handler.PacketHandler;
 import packets.lib.ByteQueue;
 import proxy.ByteConsumer;
 import proxy.EncryptionManager;
+import proxy.TrafficMonitor;
 
 import java.io.IOException;
 import java.util.function.Supplier;
@@ -18,6 +19,7 @@ public class DataReader {
     private ByteQueue currentPacket;
     private PacketHandler packetHandler;
 
+    private final boolean isClientBound;
     private final Supplier<Boolean> encryptionStatus;
     private final UnaryOperator<byte[]> decrypt;
     private final ByteConsumer transmit;
@@ -30,7 +32,8 @@ public class DataReader {
      * @param decrypt  the decryptor operator
      * @param transmit the transmit function
      */
-    private DataReader(Supplier<Boolean> encryptionStatus, UnaryOperator<byte[]> decrypt, ByteConsumer transmit) {
+    private DataReader(boolean isClientBound, Supplier<Boolean> encryptionStatus, UnaryOperator<byte[]> decrypt, ByteConsumer transmit) {
+        this.isClientBound = isClientBound;
         this.encryptionStatus = encryptionStatus;
         this.decrypt = decrypt;
         this.transmit = transmit;
@@ -51,14 +54,14 @@ public class DataReader {
      * Initialise a client-bound data reader.
      */
     public static DataReader clientBound(EncryptionManager manager) {
-        return new DataReader(manager::isEncryptionEnabled, manager::clientBoundDecrypt, manager::streamToClient);
+        return new DataReader(true, manager::isEncryptionEnabled, manager::clientBoundDecrypt, manager::streamToClient);
     }
 
     /**
      * Initialise a server-bound data reader.
      */
     public static DataReader serverBound(EncryptionManager manager) {
-        return new DataReader(manager::isEncryptionEnabled, manager::serverBoundDecrypt, manager::streamToServer);
+        return new DataReader(false, manager::isEncryptionEnabled, manager::serverBoundDecrypt, manager::streamToServer);
     }
 
     /**
@@ -157,6 +160,8 @@ public class DataReader {
             if (!hasBytes(nextPacketSize)) {
                 return;
             }
+            long relayStart = System.nanoTime();
+
             // parse the packet (including decompression)
             boolean forwardPacket = true;
             try {
@@ -175,6 +180,10 @@ public class DataReader {
             // forward the packet unless the packet builder decided swallowed it
             if (forwardPacket) {
                 transmit.consume(currentPacket);
+            }
+
+            if (isClientBound) {
+                TrafficMonitor.relayed(System.nanoTime() - relayStart);
             }
 
             // clean up to prepare for next packet

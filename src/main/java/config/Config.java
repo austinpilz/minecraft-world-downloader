@@ -483,6 +483,14 @@ public class Config {
             usage = "Ignore changes to chunks after they have been loaded.")
     public boolean ignoreBlockChanges = false;
 
+    @Option(name = "--log-traffic",
+            usage = "Log a summary of server/client traffic through the proxy every 5 seconds, for diagnosing missing chunks.")
+    private transient boolean logTraffic = false;
+
+    public static boolean logTraffic() {
+        return instance != null && instance.logTraffic;
+    }
+
     @Option(name = "--dev-mode",
             usage = "Enable developer mode")
     private transient boolean devMode = false;
