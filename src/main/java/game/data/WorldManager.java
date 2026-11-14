@@ -17,6 +17,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
@@ -38,6 +39,7 @@ import game.data.chunk.ChunkBinary;
 import game.data.chunk.ChunkEntities;
 import game.data.chunk.ChunkFactory;
 import game.data.chunk.IncompleteChunkException;
+import game.data.chunk.MissingChunkDetector;
 import game.data.chunk.palette.BlockColors;
 import game.data.chunk.palette.BlockState;
 import game.data.commandblock.CommandBlockManager;
@@ -102,6 +104,14 @@ public class WorldManager {
     private final ChunkFactory chunkFactory;
 
     private ScheduledExecutorService saveService;
+
+    private final MissingChunkDetector missingChunkDetector = new MissingChunkDetector();
+    private ScheduledExecutorService missingChunkService;
+    // view distance the server told us it uses, 0 if not known yet
+    private volatile int serverViewDistance;
+    // whether the player's position has been received this session, before that it is the one from level.dat
+    private volatile boolean playerPositionKnown;
+    private boolean reportedMissingChunks;
 
     public WorldManager() {
         this.isStarted = false;
@@ -623,6 +633,7 @@ public class WorldManager {
 
     public void setPlayerPosition(double x, double y, double z) {
         this.playerPosition.setTo(x, y, z);
+        this.playerPositionKnown = true;
 
         if (this.renderDistanceExtender != null) {
             this.renderDistanceExtender.updatePlayerPos(getPlayerPosition());
@@ -828,6 +839,66 @@ public class WorldManager {
         if (saveService != null) {
             saveService.shutdown();
         }
+        if (missingChunkService != null) {
+            missingChunkService.shutdown();
+        }
+    }
+
+    /**
+     * Called for every chunk packet the server sends, including ones that are discarded because saving is paused.
+     */
+    public void chunkReceived(CoordinateDim2D chunk) {
+        missingChunkDetector.chunkReceived(chunk);
+    }
+
+    /**
+     * Set the view distance the server uses, from the login packet or when it changes. Chunks within this distance
+     * that the server doesn't send are marked as empty on the map.
+     */
+    public void setServerViewDistance(int viewDistance) {
+        this.serverViewDistance = viewDistance;
+
+        synchronized (missingChunkDetector) {
+            if (missingChunkService == null) {
+                missingChunkService = Executors.newSingleThreadScheduledExecutor(r -> {
+                    Thread thread = new Thread(r, "Missing Chunk Detector");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+                missingChunkService.scheduleWithFixedDelay(() -> {
+                    // an exception would stop the scheduled task, so catch everything
+                    try {
+                        findMissingChunks();
+                    } catch (Exception ex) {
+                        ex.printStackTrace();
+                    }
+                }, 1, 1, TimeUnit.SECONDS);
+            }
+        }
+    }
+
+    private void findMissingChunks() {
+        // chunks are discarded while paused, and before the position is known we'd be looking in the wrong place
+        if (!Config.markEmptyChunks() || isPaused || !playerPositionKnown || serverViewDistance <= 0 || dimension == null) {
+            missingChunkDetector.pause();
+            return;
+        }
+
+        int radius = MissingChunkDetector.detectionRadius(serverViewDistance);
+        List<CoordinateDim2D> missing = missingChunkDetector.tick(
+            dimension, getPlayerPosition().globalToChunk(), radius, System.currentTimeMillis()
+        );
+        if (missing.isEmpty()) {
+            return;
+        }
+
+        if (!reportedMissingChunks) {
+            reportedMissingChunks = true;
+            System.out.println("The server didn't send some chunks near the player within "
+                + (MissingChunkDetector.WAIT_MILLIS / 1000) + "s, they are marked as empty (orange) on the map. "
+                + "Chunks within " + radius + " chunks of the player are checked.");
+        }
+        missing.forEach(GuiManager::markChunkEmpty);
     }
 
     public boolean canForget(CoordinateDim2D co) {

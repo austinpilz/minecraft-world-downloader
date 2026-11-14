@@ -121,6 +121,14 @@ public class RightClickMenu extends ContextMenu {
         ImageMode current = RegionImageHandler.getOverrideMode();
 
 
+        CheckMenuItem playerCoordsItem = new CheckMenuItem("Show player coordinates");
+        playerCoordsItem.setSelected(Config.showPlayerCoordinates());
+        playerCoordsItem.setOnAction(e -> {
+            Config.setShowPlayerCoordinates(playerCoordsItem.isSelected());
+            Config.save();
+        });
+        menu.add(playerCoordsItem);
+
         menu.add(new Menu("Render mode", null, renderModes.toArray(new MenuItem[0])));
         menu.add(overlayMenu);
         menu.add(construct("Settings", e -> GuiManager.loadWindowSettings()));

@@ -178,6 +178,7 @@ public class ClientBoundGamePacketHandler extends PacketHandler {
 
         operations.put("SetChunkCacheRadius", provider -> {
             int dist = provider.readVarInt();
+            worldManager.setServerViewDistance(dist);
 
             return dist > Config.getExtendedRenderDistance();
         });

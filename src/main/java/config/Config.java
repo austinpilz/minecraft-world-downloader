@@ -475,6 +475,10 @@ public class Config {
             usage = "Disable marking unsaved chunks in red on the map")
     public boolean disableMarkUnsavedChunks = false;
 
+    @Option(name = "--disable-mark-empty",
+            usage = "Disable marking chunks that the server sent without any blocks in orange on the map")
+    public boolean disableMarkEmptyChunks = false;
+
     @Option(name = "--mark-old-chunks",
         usage = "Grey out old chunks on the map")
     public boolean markOldChunks = true;
@@ -541,6 +545,9 @@ public class Config {
     public boolean showOverlays = true;
     public boolean overlayChunkGrid = false;
 
+    // managed from the map's right-click menu
+    public boolean showPlayerCoordinates = true;
+
     // getters
     public static int getExtendedRenderDistance() {
         return instance.extendedRenderDistance;
@@ -589,6 +596,10 @@ public class Config {
         return !instance.disableMarkUnsavedChunks;
     }
 
+    public static boolean markEmptyChunks() {
+        return !instance.disableMarkEmptyChunks;
+    }
+
     public static boolean handleBlockChanges() {
         return !instance.ignoreBlockChanges;
     }
@@ -622,6 +633,14 @@ public class Config {
 
     public static void setShowOverlays(boolean showOverlays) {
         instance.showOverlays = showOverlays;
+    }
+
+    public static boolean showPlayerCoordinates() {
+        return instance.showPlayerCoordinates;
+    }
+
+    public static void setShowPlayerCoordinates(boolean showPlayerCoordinates) {
+        instance.showPlayerCoordinates = showPlayerCoordinates;
     }
 
     public static boolean overlayChunkGrid() {

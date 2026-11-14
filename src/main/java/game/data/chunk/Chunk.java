@@ -39,6 +39,10 @@ public abstract class Chunk extends ChunkEntities {
     private boolean saved;
     private ChunkImageFactory imageFactory;
 
+    // set when a chunk packet has been checked for blocks, so chunks read from disk don't count as received empty
+    private boolean checkedForBlocks;
+    private boolean receivedEmpty;
+
     public ChunkHeightHandler getChunkHeightHandler() {
         return chunkHeightHandler;
     }
@@ -105,6 +109,30 @@ public abstract class Chunk extends ChunkEntities {
             getChunkImageFactory().markSaved();
         }
         this.saved = saved;
+    }
+
+    /**
+     * Record whether the latest chunk packet for this chunk contained any blocks.
+     */
+    protected void setReceivedEmpty(boolean receivedEmpty) {
+        this.checkedForBlocks = true;
+        this.receivedEmpty = receivedEmpty;
+    }
+
+    /**
+     * True if this chunk came from a chunk packet that was checked for blocks. False for chunks read from disk, and
+     * for versions where empty chunks aren't detected.
+     */
+    public boolean isCheckedForBlocks() {
+        return checkedForBlocks;
+    }
+
+    /**
+     * True if the latest chunk packet for this chunk had no blocks in any section, as happens when the server sends a
+     * chunk it hasn't generated.
+     */
+    public boolean isReceivedEmpty() {
+        return receivedEmpty;
     }
 
     public void setOnUnload(Runnable r) {

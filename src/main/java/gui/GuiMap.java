@@ -47,6 +47,9 @@ public class GuiMap {
     private static final Color BACKGROUND_COLOR = new Color(.16, .16, .16, 1);
     private static final Color PLAYER_COLOR = new Color(.6, .95, 1, .7);
     private static final Color PLAYER_STROKE = Color.color(.1f, .1f, .1f);
+    private static final Font PLAYER_COORDS_FONT = Font.font(null, FontWeight.BOLD, 11);
+    // the indicator circle around the player has a radius of 16, the coordinates go just above it
+    private static final int PLAYER_COORDS_OFFSET = 20;
 
     public Canvas chunkCanvas;
     public Canvas entityCanvas;
@@ -310,6 +313,11 @@ public class GuiMap {
             }
         }
 
+        // only chunks that came from the server say whether it sent any blocks, chunks redrawn from disk don't
+        if (chunk.isCheckedForBlocks()) {
+            regionHandler.setChunkEmpty(coord, chunk.isReceivedEmpty());
+        }
+
         ChunkImageFactory imageFactory = chunk.getChunkImageFactory();
         imageFactory.onComplete((imageMap, isSaved) -> {
             regionHandler.drawChunk(coord, imageMap, isSaved);
@@ -443,6 +451,29 @@ public class GuiMap {
         // indicator circle
         graphics.setStroke(Color.RED);
         graphics.strokeOval((int) playerX - 16, (int) playerZ - 16, 32, 32);
+
+        if (Config.showPlayerCoordinates()) {
+            drawPlayerCoordinates(graphics, playerX, playerZ);
+        }
+    }
+
+    /**
+     * Draw the player's block coordinates in small text just above the player marker, outlined so it stays readable
+     * on top of any terrain.
+     */
+    private void drawPlayerCoordinates(GraphicsContext graphics, double playerX, double playerZ) {
+        String text = String.format("%d, %d, %d",
+            (int) Math.floor(playerPos.getX()), (int) Math.floor(playerPos.getY()), (int) Math.floor(playerPos.getZ()));
+
+        graphics.save();
+        graphics.setFont(PLAYER_COORDS_FONT);
+        graphics.setTextAlign(TextAlignment.CENTER);
+        graphics.setLineWidth(3);
+        graphics.setStroke(PLAYER_STROKE);
+        graphics.strokeText(text, playerX, playerZ - PLAYER_COORDS_OFFSET);
+        graphics.setFill(Color.WHITE);
+        graphics.fillText(text, playerX, playerZ - PLAYER_COORDS_OFFSET);
+        graphics.restore();
     }
 
     private void drawRegion(Coordinate2D pos, Image image) {

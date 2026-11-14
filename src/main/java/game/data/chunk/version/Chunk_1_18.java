@@ -64,6 +64,7 @@ public class Chunk_1_18 extends Chunk_1_17 {
             int size = dataProvider.readVarInt();
             receivedBlockCount = 0;
             readChunkColumn(dataProvider.ofLength(size));
+            setReceivedEmpty(receivedBlockCount == 0);
             if (receivedBlockCount == 0) {
                 ChunkParseDiagnostics.emptyChunk(location, dataProvider);
             }

@@ -381,6 +381,15 @@ public class GuiManager extends Application {
         }
     }
 
+    /**
+     * Mark a chunk the server didn't send as empty on the map.
+     */
+    public static void markChunkEmpty(CoordinateDim2D coord) {
+        if (chunkGraphicsHandler != null) {
+            chunkGraphicsHandler.getRegionHandler().setChunkEmpty(coord, true);
+        }
+    }
+
     public static void clearChunks() {
         if (chunkGraphicsHandler != null) {
             chunkGraphicsHandler.clearChunks();

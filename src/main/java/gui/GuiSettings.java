@@ -58,6 +58,7 @@ public class GuiSettings {
 
     public CheckBox markUnsaved;
     public CheckBox markOld;
+    public CheckBox markEmpty;
 
     public Button saveButton;
     public Tab errTab;
@@ -126,6 +127,7 @@ public class GuiSettings {
         extendedDistanceText.setValue(config.extendedRenderDistance);
         markUnsaved.setSelected(!config.disableMarkUnsavedChunks);
         markOld.setSelected(config.markOldChunks);
+        markEmpty.setSelected(!config.disableMarkEmptyChunks);
         renderOtherPlayers.setSelected(config.renderOtherPlayers);
         enableInfoMessages.setSelected(!config.disableInfoMessages);
         enableCaveRenderMode.setSelected(config.enableCaveRenderMode);
@@ -361,6 +363,7 @@ public class GuiSettings {
         config.extendedRenderDistance =  Math.abs((int) extendedDistance.getValue());
         config.disableMarkUnsavedChunks = !markUnsaved.isSelected();
         config.markOldChunks = markOld.isSelected();
+        config.disableMarkEmptyChunks = !markEmpty.isSelected();
         config.renderOtherPlayers = renderOtherPlayers.isSelected();
         config.disableInfoMessages = !enableInfoMessages.isSelected();
         config.enableCaveRenderMode = enableCaveRenderMode.isSelected();
