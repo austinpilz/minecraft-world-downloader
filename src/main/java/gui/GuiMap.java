@@ -105,6 +105,7 @@ public class GuiMap {
     private ZoomBehaviour zoomBehaviour;
 
     private final PlayerMarker playerMarker = new PlayerMarker();
+    private final WorldBorderRenderer worldBorderRenderer = new WorldBorderRenderer();
 
     @FXML
     void initialize() {
@@ -457,6 +458,10 @@ public class GuiMap {
             for (PlayerEntity player : otherPlayers) {
                 drawOtherPlayer(graphics, player);
             }
+        }
+        if (Config.showWorldBorder()) {
+            worldBorderRenderer.draw(graphics, bounds, blocksPerPixel,
+                                     WorldManager.getInstance().getWorldBorders().get(getDimension()));
         }
         overlayRenderer.draw(graphics, bounds, blocksPerPixel, getDimension(), hoveredShape);
         markerHandler.draw(bounds, blocksPerPixel, graphics, cursorPos);

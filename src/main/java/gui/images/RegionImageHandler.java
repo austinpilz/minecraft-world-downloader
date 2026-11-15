@@ -36,6 +36,7 @@ import org.apache.commons.io.FileUtils;
 public class RegionImageHandler {
     private static final String CACHE_PATH = "image-cache";
     private static final String EMPTY_CHUNKS_PATH = "empty-chunks";
+    private static final String WORLD_BORDER_PATH = "world-border";
     // side length of a region in blocks (32 chunks * 16 blocks) - kept in sync with Bounds.overlaps()
     private static final int REGION_BLOCK_SIZE = 512;
 
@@ -112,6 +113,7 @@ public class RegionImageHandler {
     public void clear() {
         unload();
         emptyChunks.clear();
+        WorldManager.getInstance().getWorldBorders().clear();
         attemptQuiet(() -> FileUtils.deleteDirectory(Paths.get(Config.getWorldOutputDir(), CACHE_PATH).toFile()));
     }
 
@@ -292,8 +294,19 @@ public class RegionImageHandler {
      * Empty chunks are stored with the map images rather than in the world, so Minecraft never reads them.
      */
     static Path emptyChunksPath(Dimension dim) {
+        return cacheFile(EMPTY_CHUNKS_PATH, dim);
+    }
+
+    /**
+     * The world border the server sent, stored next to the empty chunks for the same reason.
+     */
+    public static Path worldBorderPath(Dimension dim) {
+        return cacheFile(WORLD_BORDER_PATH, dim);
+    }
+
+    private static Path cacheFile(String folder, Dimension dim) {
         String name = dim.getName().replaceAll("[^A-Za-z0-9_.-]", "_");
-        return Paths.get(Config.getWorldOutputDir(), CACHE_PATH, EMPTY_CHUNKS_PATH, name + ".txt");
+        return Paths.get(Config.getWorldOutputDir(), CACHE_PATH, folder, name + ".txt");
     }
 
     private void updateRenderMode() {

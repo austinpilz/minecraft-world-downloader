@@ -58,6 +58,7 @@ import game.data.region.McaFilePair;
 import game.data.region.Region;
 import game.data.villagers.VillagerManager;
 import gui.GuiManager;
+import gui.images.RegionImageHandler;
 import packets.DataTypeProvider;
 import packets.builder.PacketBuilder;
 import proxy.PacketInjector;
@@ -107,6 +108,7 @@ public class WorldManager {
 
     private final MissingChunkDetector missingChunkDetector = new MissingChunkDetector();
     private final SessionStats sessionStats = new SessionStats();
+    private final WorldBorderTracker worldBorders = new WorldBorderTracker(RegionImageHandler::worldBorderPath);
     private ScheduledExecutorService missingChunkService;
     // view distance the server told us it uses, 0 if not known yet
     private volatile int serverViewDistance;
@@ -858,6 +860,13 @@ public class WorldManager {
 
     public SessionStats getSessionStats() {
         return sessionStats;
+    }
+
+    /**
+     * World borders sent by the server, per dimension. Only shown on the map, never written to the world.
+     */
+    public WorldBorderTracker getWorldBorders() {
+        return worldBorders;
     }
 
     /**

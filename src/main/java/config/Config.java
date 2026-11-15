@@ -548,6 +548,7 @@ public class Config {
     // managed from the map's right-click menu
     public boolean showPlayerCoordinates = true;
     public boolean showSessionStats = true;
+    public boolean showWorldBorder = true;
 
     // getters
     public static int getExtendedRenderDistance() {
@@ -650,6 +651,14 @@ public class Config {
 
     public static void setShowSessionStats(boolean showSessionStats) {
         instance.showSessionStats = showSessionStats;
+    }
+
+    public static boolean showWorldBorder() {
+        return instance.showWorldBorder;
+    }
+
+    public static void setShowWorldBorder(boolean showWorldBorder) {
+        instance.showWorldBorder = showWorldBorder;
     }
 
     public static boolean overlayChunkGrid() {

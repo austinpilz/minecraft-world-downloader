@@ -137,6 +137,14 @@ public class RightClickMenu extends ContextMenu {
         });
         menu.add(statsItem);
 
+        CheckMenuItem borderItem = new CheckMenuItem("Show world border");
+        borderItem.setSelected(Config.showWorldBorder());
+        borderItem.setOnAction(e -> {
+            Config.setShowWorldBorder(borderItem.isSelected());
+            Config.save();
+        });
+        menu.add(borderItem);
+
         menu.add(new Menu("Render mode", null, renderModes.toArray(new MenuItem[0])));
         menu.add(overlayMenu);
         menu.add(construct("Settings", e -> GuiManager.loadWindowSettings()));
