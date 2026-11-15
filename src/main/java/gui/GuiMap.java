@@ -114,6 +114,8 @@ public class GuiMap {
         this.markerHandler = new MapMarkerHandler();
         this.overlayManager = new OverlayManager();
         this.overlayManager.loadFromConfig();
+        this.overlayManager.setServerBorders(dimension ->
+            Config.showWorldBorder() ? WorldManager.getInstance().getWorldBorders().get(dimension) : null);
         this.overlayRenderer = new OverlayRenderer(overlayManager);
         this.bounds = new Bounds();
 

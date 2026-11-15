@@ -49,19 +49,27 @@ public class OverlayRenderer {
     }
 
     public void draw(GraphicsContext graphics, Bounds bounds, double blocksPerPixel, Dimension dimension, OverlayShape hovered) {
-        manager.updateCoverage();
-        if (!Config.showOverlays()) {
+        manager.updateCoverage(dimension);
+        // the server's border has its own setting, so it's shown even when the imported overlays are hidden
+        OverlayShape serverBorder = manager.getServerBorderShape(dimension);
+        if (!Config.showOverlays() && serverBorder == null) {
             return;
         }
         this.bounds = bounds;
         this.blocksPerPixel = blocksPerPixel;
 
         visible.clear();
-        manager.forEachVisible(dimension, shape -> {
-            if (shape.intersects(bounds)) {
-                visible.add(shape);
-            }
-        });
+        // first, so it's underneath the imported shapes
+        if (serverBorder != null && serverBorder.intersects(bounds)) {
+            visible.add(serverBorder);
+        }
+        if (Config.showOverlays()) {
+            manager.forEachVisible(dimension, shape -> {
+                if (shape.intersects(bounds)) {
+                    visible.add(shape);
+                }
+            });
+        }
         if (hovered != null && !visible.contains(hovered)) {
             hovered = null;
         }
@@ -70,9 +78,12 @@ public class OverlayRenderer {
         graphics.setFillRule(FillRule.EVEN_ODD);
         graphics.setLineJoin(StrokeLineJoin.ROUND);
 
-        // axes go underneath all shapes, they're only a faint guide
+        // axes go underneath all shapes, they're only a faint guide. When an imported world border already shows
+        // them, the server's border doesn't draw them a second time.
+        boolean importedAxes = visible.stream()
+            .anyMatch(shape -> shape != serverBorder && shape.isShowAxes() && shape.contains(0, 0, 0));
         for (OverlayShape shape : visible) {
-            if (shape.isShowAxes()) {
+            if (shape.isShowAxes() && !(shape == serverBorder && importedAxes)) {
                 drawAxes(graphics, shape);
             }
         }
