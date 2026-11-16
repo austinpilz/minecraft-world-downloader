@@ -1,12 +1,13 @@
 plugins {
-    id "fabric-loom" version "1.8-SNAPSHOT"
+    id "net.fabricmc.fabric-loom" version "1.18-SNAPSHOT"
 }
 
 base {
-    archivesBaseName = project.archives_base_name
-    version = project.mod_version
-    group = project.maven_group
+    archivesName = project.archives_base_name
 }
+
+version = project.mod_version
+group = project.maven_group
 
 repositories {
     maven {
@@ -21,41 +22,55 @@ repositories {
 
 dependencies {
     // Fabric
+    // Minecraft now ships with official (Mojang) names, so no mappings or remapping step is needed.
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
-    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
-    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
     // Meteor
-    modImplementation "meteordevelopment:meteor-client:${project.meteor_version}"
+    implementation "meteordevelopment:meteor-client:${project.meteor_version}"
 }
 
-tasks {
-    processResources {
-        def propertyMap = [
-            "version"   : project.version,
-            "mc_version": project.minecraft_version,
-        ]
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(project.jdk_version.toString() as int)
+    }
+}
 
-        filesMatching("fabric.mod.json") {
-            expand(propertyMap)
-        }
+/**
+ * Converts a full Minecraft version into the compatibility range Fabric expects, e.g. 26.1.2 -> ~26.1
+ */
+static String toMinecraftCompat(String version) {
+    def matcher = version =~ /^(\d{2})\.([1-9]\d*)(?:\.([1-9]\d*))?$/
+
+    if (!matcher.matches()) {
+        throw new GradleException("Invalid Minecraft version format: ${version}. Expected YY.D or YY.D.H")
     }
 
-    jar {
-        from("LICENSE") {
-            rename { "${it}_${project.base.archivesBaseName}" }
-        }
+    return "~${matcher.group(1)}.${matcher.group(2)}"
+}
 
-        destinationDirectory.set(file("$rootDir/someDir"))
-    }
+processResources {
+    def propertyMap = [
+        "version"          : project.version,
+        "minecraft_version": toMinecraftCompat(project.minecraft_version.toString()),
+        "jdk_version"      : project.jdk_version,
+    ]
 
-    java {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
-    }
+    inputs.properties(propertyMap)
 
-    tasks.withType(JavaCompile).configureEach {
-        it.options.encoding = "UTF-8"
-        it.options.release = 21
+    filesMatching("fabric.mod.json") {
+        expand(propertyMap)
     }
+}
+
+jar {
+    inputs.property("archivesName", project.base.archivesName.get())
+
+    from("LICENSE") {
+        rename { "${it}_${inputs.properties["archivesName"]}" }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = "UTF-8"
 }

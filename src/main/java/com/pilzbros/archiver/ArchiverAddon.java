@@ -3,9 +3,9 @@ package com.pilzbros.archiver;
 import com.pilzbros.archiver.commands.ArchiveCommand;
 import com.pilzbros.archiver.hud.HudExample;
 import com.pilzbros.archiver.modules.ArchiveModule;
-import com.pilzbros.archiver.modules.BoatArchiveModule;
 import com.pilzbros.archiver.modules.ConflictAvoidanceModule;
 import com.pilzbros.archiver.modules.HelperModule;
+import com.pilzbros.archiver.modules.ZigZagArchiveModule;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -25,14 +25,15 @@ public class ArchiverAddon extends MeteorAddon {
     public void onInitialize() {
         // Modules
         ArchiveModule archiveModule = new ArchiveModule();
+        ZigZagArchiveModule zigZagArchiveModule = new ZigZagArchiveModule();
 
         Modules.get().add(archiveModule);
         Modules.get().add(new HelperModule(archiveModule));
-        Modules.get().add(new BoatArchiveModule());
+        Modules.get().add(zigZagArchiveModule);
         Modules.get().add(new ConflictAvoidanceModule());
 
         // Commands
-        Commands.add(new ArchiveCommand(archiveModule));
+        Commands.add(new ArchiveCommand(archiveModule, zigZagArchiveModule));
 
         // HUD
         Hud.get().register(HudExample.INFO);
