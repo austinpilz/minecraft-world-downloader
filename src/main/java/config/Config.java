@@ -5,6 +5,9 @@ import com.google.gson.stream.JsonReader;
 import game.data.WorldManager;
 import game.data.registries.RegistryLoader;
 import game.data.registries.RegistryManager;
+import game.data.route.RouteApiServer;
+import game.data.route.RoutePlanner;
+import game.data.route.RouteService;
 import game.protocol.Protocol;
 import game.protocol.ProtocolVersionHandler;
 import gui.GuiManager;
@@ -281,6 +284,11 @@ public class Config {
         }
 
         new ConnectionManager().startProxy();
+
+        if (routeApiPort > 0) {
+            RouteApiServer.start(routeApiPort, WorldManager.getInstance().getRouteSession(), (radius, buffer, skipCaptured) ->
+                RouteService.plan(radius > 0 ? radius : RouteService.defaultRadius(), buffer, skipCaptured, RoutePlanner.DEFAULT_OPTIMISE_MILLIS));
+        }
     }
 
     private void writeSettings() {
@@ -537,6 +545,16 @@ public class Config {
             usage = "Password for a SOCKS5 proxy that requires authentication. Not saved to the config file.")
     public transient String socksProxyPassword = "";
 
+    @Option(name = "--route-api-port",
+            usage = "Serve the route planner's local API for the flight addon on this port. Listens on 127.0.0.1 only. 0 disables it.")
+    public int routeApiPort = 0;
+
+    // route planner, managed from the map's right-click menu. Radius 0 means the server's view distance.
+    public int routeRadius = 0;
+    public int routeBufferChunks = 0;
+    public int routeChunkBudget = 0;
+    public boolean showRoute = true;
+
     // not really important enough to have an option for, can change it in config file
     public boolean smoothZooming = true;
 
@@ -667,6 +685,42 @@ public class Config {
 
     public static void setOverlayChunkGrid(boolean overlayChunkGrid) {
         instance.overlayChunkGrid = overlayChunkGrid;
+    }
+
+    public static int getRouteApiPort() {
+        return instance.routeApiPort;
+    }
+
+    public static int getRouteRadius() {
+        return instance.routeRadius;
+    }
+
+    public static void setRouteRadius(int routeRadius) {
+        instance.routeRadius = routeRadius;
+    }
+
+    public static int getRouteBufferChunks() {
+        return instance.routeBufferChunks;
+    }
+
+    public static void setRouteBufferChunks(int routeBufferChunks) {
+        instance.routeBufferChunks = routeBufferChunks;
+    }
+
+    public static int getRouteChunkBudget() {
+        return instance.routeChunkBudget;
+    }
+
+    public static void setRouteChunkBudget(int routeChunkBudget) {
+        instance.routeChunkBudget = routeChunkBudget;
+    }
+
+    public static boolean showRoute() {
+        return instance.showRoute;
+    }
+
+    public static void setShowRoute(boolean showRoute) {
+        instance.showRoute = showRoute;
     }
 
     public static MicrosoftAuthHandler getMicrosoftAuth() {

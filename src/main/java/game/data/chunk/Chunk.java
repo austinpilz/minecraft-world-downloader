@@ -11,6 +11,7 @@ import game.data.coordinates.Coordinate3D;
 import game.data.coordinates.CoordinateDim2D;
 import game.data.dimension.Dimension;
 import game.protocol.Protocol;
+import gui.overlay.OverlayManager;
 import java.util.function.BiConsumer;
 import packets.DataTypeProvider;
 import packets.builder.PacketBuilder;
@@ -107,6 +108,10 @@ public abstract class Chunk extends ChunkEntities {
     public void setSaved(boolean saved) {
         if (saved && !this.saved) {
             getChunkImageFactory().markSaved();
+            // keeps the overlay coverage (and so the route planner) current even without the map window
+            if (location != null) {
+                OverlayManager.getInstance().getCoverage().chunkSaved(location.getDimension(), location);
+            }
         }
         this.saved = saved;
     }

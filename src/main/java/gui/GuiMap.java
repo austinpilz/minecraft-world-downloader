@@ -82,6 +82,7 @@ public class GuiMap {
     private MapMarkerHandler markerHandler;
     private OverlayManager overlayManager;
     private OverlayRenderer overlayRenderer;
+    private RouteRenderer routeRenderer;
     private OverlayShape hoveredShape;
     private Dimension dimension;
     private Collection<PlayerEntity> otherPlayers;
@@ -112,8 +113,8 @@ public class GuiMap {
         this.zoomBehaviour = Config.smoothZooming() ? new SmoothZooming() : new SnapZooming();
         this.regionHandler = new RegionImageHandler();
         this.markerHandler = new MapMarkerHandler();
-        this.overlayManager = new OverlayManager();
-        this.overlayManager.loadFromConfig();
+        this.overlayManager = OverlayManager.getInstance();
+        this.routeRenderer = new RouteRenderer(WorldManager.getInstance().getRouteSession());
         this.overlayManager.setServerBorders(dimension ->
             Config.showWorldBorder() ? WorldManager.getInstance().getWorldBorders().get(dimension) : null);
         this.overlayRenderer = new OverlayRenderer(overlayManager);
@@ -207,7 +208,8 @@ public class GuiMap {
             session = "-:--:--";
         }
 
-        statsLabel.setText(size + "  |  " + rate + "  |  " + session);
+        String route = manager.getRouteSession().summary();
+        statsLabel.setText(size + "  |  " + rate + "  |  " + session + (route.isEmpty() ? "" : "  |  " + route));
     }
 
     private void setupHelpLabel() {
@@ -352,6 +354,7 @@ public class GuiMap {
         entityCanvas.setOnContextMenuRequested(e -> {
             menu.refreshPauseLabel();
             menu.refreshOverlayItems(hoveredShape);
+            menu.refreshRouteItems();
             menu.show(entityCanvas, e.getScreenX(), e.getScreenY());
         });
         entityCanvas.setOnMouseClicked(e -> {
@@ -466,6 +469,7 @@ public class GuiMap {
                                      WorldManager.getInstance().getWorldBorders().get(getDimension()));
         }
         overlayRenderer.draw(graphics, bounds, blocksPerPixel, getDimension(), hoveredShape);
+        routeRenderer.draw(graphics, bounds, blocksPerPixel);
         markerHandler.draw(bounds, blocksPerPixel, graphics, cursorPos);
         drawPlayer(graphics);
     }

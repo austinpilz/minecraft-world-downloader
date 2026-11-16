@@ -180,3 +180,41 @@ Optional fields for every shape:
 - `width`: outline width in pixels, 1 to 8 (default 2).
 
 Entries that can't be read are skipped, and the number of skipped entries is shown after importing.
+
+## Route planner
+Instead of flying over the whole world, the downloader can plan a route over the overlay shapes you have shown and
+have the flight addon fly it. The proxy picks hover points that cover every chunk the shown shapes touch (minus the
+chunks already saved), orders them into one short tour, and tells the addon where to go next. A stop only counts as
+done once the proxy has saved the chunks around it, so nothing is skipped because the server was slow.
+
+Right-click the map and open **Route**:
+- **Plan route from shown overlays...** asks for the view distance (the server's, if known), an optional buffer of
+  extra chunks around every shape, and a chunk budget per minute. Planning takes a few seconds for thousands of stops.
+  The route is drawn on the map: orange legs still to fly, green legs done, the current stop in white with the square
+  of chunks that has to be loaded there.
+- **Start route** / **Pause route** / **Resume route** control the route. The status corner shows the progress and the
+  time left at the measured flying speed.
+- **Skip current stop** gives up on the stop the addon is waiting at.
+- **Re-order remaining stops from here** re-plans the open stops from the player's position, e.g. after a teleport.
+  Starting a route far away from where it left off does this on its own.
+- **Export route as overlay...** writes the route as a shape file (one line plus numbered points), to look at before
+  flying it or to keep.
+- **Clear route** forgets it.
+
+Progress is saved in `route.json` in the world folder, so a route can be continued another day. A stop that doesn't
+complete within 90 seconds of the player arriving is put aside and tried once more after the other stops, then
+skipped. Shapes larger than the coverage limit (such as a world border) are planned over in full.
+
+### Local API for the flight addon
+Start the downloader with `--route-api-port 8765` to serve the route on `http://127.0.0.1:8765`. The API only listens
+on localhost and is off by default. Nothing is sent towards the game server.
+
+| Call | Purpose |
+|---|---|
+| `GET /route/next?player=NAME` | the current target (`x`, `z`, `chunkX`, `chunkZ`), stop number, stops left, chunks still `missing` at this stop, whether to `hold` (chunk budget exceeded), `state` |
+| `GET /route/status` | progress of the whole route, measured speed, ETA in seconds |
+| `POST /route/plan?radius=8&buffer=0&skipCaptured=true` | plan over the shown overlays; `radius` 0 uses the server's view distance |
+| `POST /route/start`, `/route/pause`, `/route/resume`, `/route/skip`, `/route/replan`, `/route/clear` | control, the same as the menu |
+
+The addon polls `/route/next`, flies to the target, holds there until `missing` reaches 0 and the stop number changes,
+then asks again. States are `IDLE`, `PLANNED`, `RUNNING`, `PAUSED` and `DONE`.
