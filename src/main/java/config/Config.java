@@ -475,6 +475,10 @@ public class Config {
             usage = "Disable marking unsaved chunks in red on the map")
     public boolean disableMarkUnsavedChunks = false;
 
+    @Option(name = "--disable-mark-empty",
+            usage = "Disable marking chunks that the server sent without any blocks in orange on the map")
+    public boolean disableMarkEmptyChunks = false;
+
     @Option(name = "--mark-old-chunks",
         usage = "Grey out old chunks on the map")
     public boolean markOldChunks = true;
@@ -482,6 +486,14 @@ public class Config {
     @Option(name = "--ignore-block-changes",
             usage = "Ignore changes to chunks after they have been loaded.")
     public boolean ignoreBlockChanges = false;
+
+    @Option(name = "--log-traffic",
+            usage = "Log a summary of server/client traffic through the proxy every 5 seconds, for diagnosing missing chunks.")
+    private transient boolean logTraffic = false;
+
+    public static boolean logTraffic() {
+        return instance != null && instance.logTraffic;
+    }
 
     @Option(name = "--dev-mode",
             usage = "Enable developer mode")
@@ -533,6 +545,11 @@ public class Config {
     public boolean showOverlays = true;
     public boolean overlayChunkGrid = false;
 
+    // managed from the map's right-click menu
+    public boolean showPlayerCoordinates = true;
+    public boolean showSessionStats = true;
+    public boolean showWorldBorder = true;
+
     // getters
     public static int getExtendedRenderDistance() {
         return instance.extendedRenderDistance;
@@ -581,6 +598,10 @@ public class Config {
         return !instance.disableMarkUnsavedChunks;
     }
 
+    public static boolean markEmptyChunks() {
+        return !instance.disableMarkEmptyChunks;
+    }
+
     public static boolean handleBlockChanges() {
         return !instance.ignoreBlockChanges;
     }
@@ -614,6 +635,30 @@ public class Config {
 
     public static void setShowOverlays(boolean showOverlays) {
         instance.showOverlays = showOverlays;
+    }
+
+    public static boolean showPlayerCoordinates() {
+        return instance.showPlayerCoordinates;
+    }
+
+    public static void setShowPlayerCoordinates(boolean showPlayerCoordinates) {
+        instance.showPlayerCoordinates = showPlayerCoordinates;
+    }
+
+    public static boolean showSessionStats() {
+        return instance.showSessionStats;
+    }
+
+    public static void setShowSessionStats(boolean showSessionStats) {
+        instance.showSessionStats = showSessionStats;
+    }
+
+    public static boolean showWorldBorder() {
+        return instance.showWorldBorder;
+    }
+
+    public static void setShowWorldBorder(boolean showWorldBorder) {
+        instance.showWorldBorder = showWorldBorder;
     }
 
     public static boolean overlayChunkGrid() {

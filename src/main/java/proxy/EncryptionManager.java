@@ -163,6 +163,7 @@ public class EncryptionManager {
      * @param bytes the bytes to stream
      */
     public void streamToClient(ByteQueue bytes) throws IOException {
+        long start = System.nanoTime();
         streamTo(streamToClient, bytes, this::clientBoundEncrypt);
 
         // if we need to insert packets, send at most 100 at a time
@@ -170,8 +171,9 @@ public class EncryptionManager {
         while (packetInjector.hasNext() && limit > 0) {
             limit--;
             streamTo(streamToClient, packetInjector.getNext(), this::clientBoundEncrypt);
+            TrafficMonitor.injectedSent();
         }
-
+        TrafficMonitor.clientWrite(System.nanoTime() - start);
     }
 
     /**

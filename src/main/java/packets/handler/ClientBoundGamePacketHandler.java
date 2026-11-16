@@ -6,6 +6,7 @@ import java.util.Map;
 import config.Config;
 import config.Option;
 import config.Version;
+import game.data.WorldBorderTracker;
 import game.data.WorldManager;
 import game.data.coordinates.Coordinate3D;
 import game.data.coordinates.CoordinateDim2D;
@@ -176,8 +177,57 @@ public class ClientBoundGamePacketHandler extends PacketHandler {
             return true;
         });
 
+        // the world border is only remembered to show it on the map, the downloaded world keeps the default border
+        WorldBorderTracker borders = worldManager.getWorldBorders();
+        operations.put("InitializeBorder", provider -> {
+            double x = provider.readDouble();
+            double z = provider.readDouble();
+            provider.readDouble(); // old size, the border may be moving from there
+            double size = provider.readDouble();
+            borders.setBorder(worldManager.getDimension(), x, z, size);
+            return true;
+        });
+
+        // before 1.17 all border changes were a single packet starting with the action
+        operations.put("SetBorder", provider -> {
+            Dimension dimension = worldManager.getDimension();
+            switch (provider.readVarInt()) {
+                case 0 -> borders.setSize(dimension, provider.readDouble());
+                case 1 -> {
+                    provider.readDouble(); // old size
+                    borders.setSize(dimension, provider.readDouble());
+                }
+                case 2 -> borders.setCenter(dimension, provider.readDouble(), provider.readDouble());
+                case 3 -> {
+                    double x = provider.readDouble();
+                    double z = provider.readDouble();
+                    provider.readDouble(); // old size
+                    borders.setBorder(dimension, x, z, provider.readDouble());
+                }
+                default -> { } // warning time and distance
+            }
+            return true;
+        });
+
+        operations.put("SetBorderCenter", provider -> {
+            borders.setCenter(worldManager.getDimension(), provider.readDouble(), provider.readDouble());
+            return true;
+        });
+
+        operations.put("SetBorderLerpSize", provider -> {
+            provider.readDouble(); // old size
+            borders.setSize(worldManager.getDimension(), provider.readDouble());
+            return true;
+        });
+
+        operations.put("SetBorderSize", provider -> {
+            borders.setSize(worldManager.getDimension(), provider.readDouble());
+            return true;
+        });
+
         operations.put("SetChunkCacheRadius", provider -> {
             int dist = provider.readVarInt();
+            worldManager.setServerViewDistance(dist);
 
             return dist > Config.getExtendedRenderDistance();
         });
