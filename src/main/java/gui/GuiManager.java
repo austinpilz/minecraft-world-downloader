@@ -35,6 +35,9 @@ public class GuiManager extends Application {
     private static boolean hasErrors;
     private static boolean authenticationFailed;
     private static ObservableList<String> messages;
+    private static final int MAX_ERROR_MESSAGES = 500;
+    private static final ByteArrayOutputStream pendingErrorOutput = new ByteArrayOutputStream();
+    private static boolean errorFlushScheduled;
 
     private static GuiMap chunkGraphicsHandler;
     private static Config config;
@@ -81,18 +84,48 @@ public class GuiManager extends Application {
     public static void redirectErrorOutput() {
         messages = FXCollections.observableArrayList();
 
-        System.setErr(new PrintStream(new ByteArrayOutputStream() {
+        // Every write used to schedule its own FX task, so a single stack trace queued dozens of them and a burst of
+        // errors could keep the FX thread (and with it the map) busy indefinitely. Instead, buffer everything written
+        // and drain it in at most one pending FX task.
+        System.setErr(new PrintStream(new OutputStream() {
             @Override
-            public synchronized void write(byte[] b, int off, int len) {
-                Platform.runLater(() -> {
-                    notifyNewError();
-
-                    messages.add(this.toString());
-                    this.reset();
-                });
-                super.write(b, off, len);
+            public void write(int b) {
+                write(new byte[] { (byte) b }, 0, 1);
             }
-        }));
+
+            @Override
+            public void write(byte[] b, int off, int len) {
+                synchronized (pendingErrorOutput) {
+                    pendingErrorOutput.write(b, off, len);
+                    if (errorFlushScheduled) {
+                        return;
+                    }
+                    errorFlushScheduled = true;
+                }
+                Platform.runLater(GuiManager::flushErrorOutput);
+            }
+        }, true));
+    }
+
+    private static void flushErrorOutput() {
+        String text;
+        synchronized (pendingErrorOutput) {
+            text = pendingErrorOutput.toString();
+            pendingErrorOutput.reset();
+            errorFlushScheduled = false;
+        }
+
+        if (text.isBlank()) {
+            return;
+        }
+
+        notifyNewError();
+        messages.add(text);
+
+        // trim in bulk so listeners rarely have to handle removals
+        if (messages.size() > MAX_ERROR_MESSAGES) {
+            messages.remove(0, messages.size() - MAX_ERROR_MESSAGES / 2);
+        }
     }
 
     public static void setStatusMessage(String str) {
@@ -345,6 +378,15 @@ public class GuiManager extends Application {
     public static void setChunkLoaded(CoordinateDim2D coord, Chunk chunk) {
         if (chunkGraphicsHandler != null) {
             chunkGraphicsHandler.setChunkLoaded(coord, chunk);
+        }
+    }
+
+    /**
+     * Mark a chunk the server didn't send as empty on the map.
+     */
+    public static void markChunkEmpty(CoordinateDim2D coord) {
+        if (chunkGraphicsHandler != null) {
+            chunkGraphicsHandler.getRegionHandler().setChunkEmpty(coord, true);
         }
     }
 

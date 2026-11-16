@@ -130,6 +130,14 @@ public class ChunkCoverage {
      * @param revision changes whenever layers are added or removed, so the shape index is rebuilt
      */
     public void update(List<OverlayLayer> layers, int revision) {
+        update(layers, List.of(), revision);
+    }
+
+    /**
+     * @param extraShapes shapes of the current dimension that aren't part of a layer, such as the server's world
+     *                    border. The revision must change when these change.
+     */
+    public void update(List<OverlayLayer> layers, List<OverlayShape> extraShapes, int revision) {
         Batch batch;
         while ((batch = pending.poll()) != null) {
             if (batch.reset) {
@@ -151,7 +159,7 @@ public class ChunkCoverage {
         if (rebuild || revision != layerRevision) {
             rebuild = false;
             layerRevision = revision;
-            rebuildIndex(layers);
+            rebuildIndex(layers, extraShapes);
         }
     }
 
@@ -167,12 +175,13 @@ public class ChunkCoverage {
         }
     }
 
-    private void rebuildIndex(List<OverlayLayer> layers) {
+    private void rebuildIndex(List<OverlayLayer> layers, List<OverlayShape> extraShapes) {
         shapesByRegion.clear();
         if (dimension == null) {
             return;
         }
 
+        extraShapes.forEach(this::index);
         for (OverlayLayer layer : layers) {
             if (!layer.appliesTo(dimension)) {
                 continue;

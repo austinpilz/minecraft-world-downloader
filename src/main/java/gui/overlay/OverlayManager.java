@@ -1,6 +1,7 @@
 package gui.overlay;
 
 import config.Config;
+import game.data.WorldBorderTracker.Border;
 import game.data.dimension.Dimension;
 import java.io.IOException;
 import java.io.Reader;
@@ -9,13 +10,18 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import javafx.scene.paint.Color;
 
 /**
  * Keeps track of the imported overlay layers and stores them in the config file so they are restored on startup.
  */
 public class OverlayManager {
+    static final String SERVER_BORDER_LABEL = "World border";
+
     private final List<OverlayLayer> layers = new ArrayList<>();
 
     // entries from the config whose file could not be read, kept so they aren't lost when the config is saved
@@ -23,6 +29,12 @@ public class OverlayManager {
 
     private final ChunkCoverage coverage = new ChunkCoverage();
     private int revision;
+
+    // the world border the server sent, shown like an imported world border. Only used on the JavaFX thread.
+    private Function<Dimension, Border> serverBorders = dimension -> null;
+    private Dimension serverBorderDimension;
+    private Border serverBorder;
+    private OverlayShape serverBorderShape;
 
     public void loadFromConfig() {
         for (OverlayEntry entry : Config.getOverlays()) {
@@ -76,9 +88,44 @@ public class OverlayManager {
 
     /**
      * Apply newly saved chunks to the shapes' captured counts. Must be called on the JavaFX thread.
+     *
+     * @param dimension the dimension the coverage is tracked for
      */
-    public void updateCoverage() {
-        coverage.update(layers, revision);
+    public void updateCoverage(Dimension dimension) {
+        OverlayShape border = getServerBorderShape(dimension);
+        coverage.update(layers, border == null ? List.of() : List.of(border), revision);
+    }
+
+    /**
+     * @param serverBorders gives the world border the server sent for a dimension, or null if there is none or it
+     *                      shouldn't be shown
+     */
+    public void setServerBorders(Function<Dimension, Border> serverBorders) {
+        this.serverBorders = serverBorders;
+    }
+
+    /**
+     * The world border the server sent for the given dimension as a shape, so it gets the same axes, name and chunk
+     * count as a world border imported from a file. The shape itself is invisible, the border is drawn as blue stripes
+     * by {@link gui.WorldBorderRenderer}. Null if there is no border to show. Must be called on the JavaFX thread.
+     */
+    public OverlayShape getServerBorderShape(Dimension dimension) {
+        Border border = dimension == null ? null : serverBorders.apply(dimension);
+        if (!Objects.equals(border, serverBorder) || !Objects.equals(dimension, serverBorderDimension)) {
+            serverBorder = border;
+            serverBorderDimension = dimension;
+            serverBorderShape = border == null ? null : borderShape(border);
+            // the coverage index has to pick up the new shape
+            revision++;
+        }
+        return serverBorderShape;
+    }
+
+    static OverlayShape borderShape(Border border) {
+        return OverlayShape.rectangle(border.minX(), border.minZ(), border.maxX(), border.maxZ())
+            .withLabel(SERVER_BORDER_LABEL)
+            .withStyle(Color.TRANSPARENT, Color.TRANSPARENT, 2)
+            .withAxes(true);
     }
 
     public List<OverlayLayer> getLayers() {
@@ -105,16 +152,21 @@ public class OverlayManager {
      * @param tolerance distance in blocks within which lines and points count as hit
      */
     public OverlayShape findAt(double x, double z, double tolerance, Dimension dimension) {
-        if (!Config.showOverlays()) {
-            return null;
-        }
-
         OverlayShape[] best = new OverlayShape[1];
-        forEachVisible(dimension, shape -> {
+        Consumer<OverlayShape> check = shape -> {
             if (shape.contains(x, z, tolerance) && (best[0] == null || shape.boundingArea() < best[0].boundingArea())) {
                 best[0] = shape;
             }
-        });
+        };
+
+        if (Config.showOverlays()) {
+            forEachVisible(dimension, check);
+        }
+        // checked last, so an imported border of the same size wins
+        OverlayShape border = getServerBorderShape(dimension);
+        if (border != null) {
+            check.accept(border);
+        }
         return best[0];
     }
 }

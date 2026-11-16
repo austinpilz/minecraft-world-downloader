@@ -5,6 +5,7 @@ import game.protocol.Protocol;
 import packets.DataProvider;
 import packets.DataTypeProvider;
 import proxy.ConnectionManager;
+import proxy.TrafficMonitor;
 
 import javax.naming.SizeLimitExceededException;
 import java.util.Map;
@@ -50,6 +51,7 @@ public abstract class PacketHandler {
         int packetID = typeProvider.readVarInt();
 
         String packetType = protocol.get(packetID, isClientBound());
+        TrafficMonitor.packet(isClientBound(), packetType);
         PacketOperator operator = getOperators().getOrDefault(packetType, null);
         if (operator == null) {
             return true;

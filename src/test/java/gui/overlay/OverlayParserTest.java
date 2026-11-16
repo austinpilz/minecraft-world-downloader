@@ -179,6 +179,40 @@ class OverlayParserTest {
     }
 
     @Test
+    void worldBordersShowAxes() throws IOException {
+        // set named "World borders" in BlueMap, "World Border" in Dynmap
+        OverlayParser.Result bluemap = parseResource("bluemap-megacitycraft-world.json");
+        assertThat(bluemap.getSets().get(1).getShapes()).allMatch(OverlayShape::isShowAxes);
+        assertThat(find(bluemap, "hirdarth").isShowAxes()).isFalse();
+
+        OverlayParser.Result dynmap = parseResource("dynmap-mrt-new.json");
+        assertThat(dynmap.getSets().get(2).getShapes().get(0).isShowAxes()).isTrue();
+        assertThat(find(dynmap, "Spawn").isShowAxes()).isFalse();
+    }
+
+    @Test
+    void axesInNativeFormat() {
+        OverlayParser.Result result = OverlayParser.parse("""
+            {"shapes": [
+                {"type": "rect", "from": [-14000, -14000], "to": [13999, 13999], "label": "World border (14K)"},
+                {"type": "circle", "center": [0, 0], "radius": 5000, "label": "worldborder", "axes": false},
+                {"type": "rect", "from": [-10, -10], "to": [10, 10], "label": "Spawn", "axes": true},
+                {"type": "rect", "from": [0, 0], "to": [5, 5], "label": "Plot", "set": "World_Borders"},
+                {"type": "line", "points": [[0, 0], [5, 0]], "label": "Border road", "set": "World border"},
+                {"type": "rect", "from": [0, 0], "to": [5, 5], "label": "Border town"}
+            ]}
+            """);
+
+        assertThat(find(result, "World border (14K)").isShowAxes()).isTrue();
+        assertThat(find(result, "worldborder").isShowAxes()).isFalse();
+        assertThat(find(result, "Spawn").isShowAxes()).isTrue();
+        assertThat(find(result, "Plot").isShowAxes()).isTrue();
+        // lines have no area to draw the axes in
+        assertThat(find(result, "Border road").isShowAxes()).isFalse();
+        assertThat(find(result, "Border town").isShowAxes()).isFalse();
+    }
+
+    @Test
     void unknownFormat() {
         assertThatThrownBy(() -> OverlayParser.parse("{\"foo\": 1}"))
             .isInstanceOf(IllegalArgumentException.class);

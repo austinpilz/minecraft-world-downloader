@@ -121,6 +121,30 @@ public class RightClickMenu extends ContextMenu {
         ImageMode current = RegionImageHandler.getOverrideMode();
 
 
+        CheckMenuItem playerCoordsItem = new CheckMenuItem("Show player coordinates");
+        playerCoordsItem.setSelected(Config.showPlayerCoordinates());
+        playerCoordsItem.setOnAction(e -> {
+            Config.setShowPlayerCoordinates(playerCoordsItem.isSelected());
+            Config.save();
+        });
+        menu.add(playerCoordsItem);
+
+        CheckMenuItem statsItem = new CheckMenuItem("Show session stats");
+        statsItem.setSelected(Config.showSessionStats());
+        statsItem.setOnAction(e -> {
+            Config.setShowSessionStats(statsItem.isSelected());
+            Config.save();
+        });
+        menu.add(statsItem);
+
+        CheckMenuItem borderItem = new CheckMenuItem("Show world border");
+        borderItem.setSelected(Config.showWorldBorder());
+        borderItem.setOnAction(e -> {
+            Config.setShowWorldBorder(borderItem.isSelected());
+            Config.save();
+        });
+        menu.add(borderItem);
+
         menu.add(new Menu("Render mode", null, renderModes.toArray(new MenuItem[0])));
         menu.add(overlayMenu);
         menu.add(construct("Settings", e -> GuiManager.loadWindowSettings()));

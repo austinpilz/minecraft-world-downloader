@@ -8,6 +8,7 @@ public enum ChunkImageState {
     SAVED(Color.TRANSPARENT),
     DEBUG(Color.color(0, 0, 1, .3)),
     UNSAVED(Color.color(1, 0, 0, .35), Config::markUnsavedChunks),
+    EMPTY(Color.color(1, .55, 0, .4), Config::markEmptyChunks),
     EXTENDED(Color.color(0, 1, 0, .3), Config::drawExtendedChunks),
     OUTDATED(Color.color(.16, .16, .16, .45), Config::markOldChunks);
 

@@ -6,6 +6,7 @@ import game.data.coordinates.Coordinate2D;
 import game.data.coordinates.CoordinateDim2D;
 import game.data.coordinates.CoordinateDouble2D;
 import game.data.coordinates.CoordinateDouble3D;
+import game.data.SessionStats;
 import game.data.WorldManager;
 import game.data.chunk.Chunk;
 import game.data.dimension.Dimension;
@@ -16,8 +17,11 @@ import gui.markers.PlayerMarker;
 import gui.overlay.OverlayManager;
 import gui.overlay.OverlayRenderer;
 import gui.overlay.OverlayShape;
+import javafx.animation.Animation;
 import javafx.animation.AnimationTimer;
+import javafx.animation.KeyFrame;
 import javafx.animation.PauseTransition;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyDoubleProperty;
 import javafx.fxml.FXML;
@@ -37,6 +41,10 @@ import javafx.scene.text.TextAlignment;
 import javafx.util.Duration;
 
 import java.util.Collection;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import util.PathUtils;
 import util.PrintUtils;
 
 /**
@@ -47,6 +55,9 @@ public class GuiMap {
     private static final Color BACKGROUND_COLOR = new Color(.16, .16, .16, 1);
     private static final Color PLAYER_COLOR = new Color(.6, .95, 1, .7);
     private static final Color PLAYER_STROKE = Color.color(.1f, .1f, .1f);
+    private static final Font PLAYER_COORDS_FONT = Font.font(null, FontWeight.BOLD, 11);
+    // the indicator circle around the player has a radius of 16, the coordinates go just above it
+    private static final int PLAYER_COORDS_OFFSET = 20;
 
     public Canvas chunkCanvas;
     public Canvas entityCanvas;
@@ -54,6 +65,10 @@ public class GuiMap {
     public Label coordsLabel;
     public Button playerLockButton;
     public Label statusLabel;
+    public Label statsLabel;
+
+    // size of the world folder, measured on a background thread as walking the folder can take a moment
+    private volatile long worldSizeBytes = -1;
 
     private CoordinateDouble3D playerPos;
     private Coordinate2D cursorPos;
@@ -90,6 +105,7 @@ public class GuiMap {
     private ZoomBehaviour zoomBehaviour;
 
     private final PlayerMarker playerMarker = new PlayerMarker();
+    private final WorldBorderRenderer worldBorderRenderer = new WorldBorderRenderer();
 
     @FXML
     void initialize() {
@@ -98,6 +114,8 @@ public class GuiMap {
         this.markerHandler = new MapMarkerHandler();
         this.overlayManager = new OverlayManager();
         this.overlayManager.loadFromConfig();
+        this.overlayManager.setServerBorders(dimension ->
+            Config.showWorldBorder() ? WorldManager.getInstance().getWorldBorders().get(dimension) : null);
         this.overlayRenderer = new OverlayRenderer(overlayManager);
         this.bounds = new Bounds();
 
@@ -140,6 +158,56 @@ public class GuiMap {
         setupContextMenu();
         setupHelpLabel();
         setupDragging();
+        setupStatsLabel();
+    }
+
+    /**
+     * Show the world's size on disk, the rate chunks are coming in at and how long the session has been running in
+     * the bottom right corner, updated every second.
+     */
+    private void setupStatsLabel() {
+        statsLabel.setMouseTransparent(true);
+
+        ScheduledExecutorService sizeService = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "World Size Monitor");
+            t.setDaemon(true);
+            return t;
+        });
+        sizeService.scheduleWithFixedDelay(() -> {
+            if (Config.showSessionStats()) {
+                worldSizeBytes = SessionStats.directorySize(PathUtils.toPath(Config.getWorldOutputDir()));
+            }
+        }, 0, 5, TimeUnit.SECONDS);
+
+        Timeline timeline = new Timeline(new KeyFrame(Duration.seconds(1), e -> updateStatsLabel()));
+        timeline.setCycleCount(Animation.INDEFINITE);
+        timeline.play();
+        updateStatsLabel();
+    }
+
+    private void updateStatsLabel() {
+        boolean show = Config.showSessionStats();
+        statsLabel.setVisible(show);
+        if (!show) {
+            return;
+        }
+
+        WorldManager manager = WorldManager.getInstance();
+        SessionStats stats = manager.getSessionStats();
+
+        String size = worldSizeBytes < 0 ? "..." : SessionStats.formatSize(worldSizeBytes);
+        String rate = String.format("%.1f chunks/s", stats.chunksPerSecond());
+        long sessionMillis = stats.sessionMillis();
+        String session;
+        if (sessionMillis >= 0) {
+            session = SessionStats.formatDuration(sessionMillis);
+        } else if (manager.isPaused()) {
+            session = "paused";
+        } else {
+            session = "-:--:--";
+        }
+
+        statsLabel.setText(size + "  |  " + rate + "  |  " + session);
     }
 
     private void setupHelpLabel() {
@@ -310,6 +378,11 @@ public class GuiMap {
             }
         }
 
+        // only chunks that came from the server say whether it sent any blocks, chunks redrawn from disk don't
+        if (chunk.isCheckedForBlocks()) {
+            regionHandler.setChunkEmpty(coord, chunk.isReceivedEmpty());
+        }
+
         ChunkImageFactory imageFactory = chunk.getChunkImageFactory();
         imageFactory.onComplete((imageMap, isSaved) -> {
             regionHandler.drawChunk(coord, imageMap, isSaved);
@@ -388,6 +461,10 @@ public class GuiMap {
                 drawOtherPlayer(graphics, player);
             }
         }
+        if (Config.showWorldBorder()) {
+            worldBorderRenderer.draw(graphics, bounds, blocksPerPixel,
+                                     WorldManager.getInstance().getWorldBorders().get(getDimension()));
+        }
         overlayRenderer.draw(graphics, bounds, blocksPerPixel, getDimension(), hoveredShape);
         markerHandler.draw(bounds, blocksPerPixel, graphics, cursorPos);
         drawPlayer(graphics);
@@ -443,6 +520,29 @@ public class GuiMap {
         // indicator circle
         graphics.setStroke(Color.RED);
         graphics.strokeOval((int) playerX - 16, (int) playerZ - 16, 32, 32);
+
+        if (Config.showPlayerCoordinates()) {
+            drawPlayerCoordinates(graphics, playerX, playerZ);
+        }
+    }
+
+    /**
+     * Draw the player's block coordinates in small text just above the player marker, outlined so it stays readable
+     * on top of any terrain.
+     */
+    private void drawPlayerCoordinates(GraphicsContext graphics, double playerX, double playerZ) {
+        String text = String.format("%d, %d, %d",
+            (int) Math.floor(playerPos.getX()), (int) Math.floor(playerPos.getY()), (int) Math.floor(playerPos.getZ()));
+
+        graphics.save();
+        graphics.setFont(PLAYER_COORDS_FONT);
+        graphics.setTextAlign(TextAlignment.CENTER);
+        graphics.setLineWidth(3);
+        graphics.setStroke(PLAYER_STROKE);
+        graphics.strokeText(text, playerX, playerZ - PLAYER_COORDS_OFFSET);
+        graphics.setFill(Color.WHITE);
+        graphics.fillText(text, playerX, playerZ - PLAYER_COORDS_OFFSET);
+        graphics.restore();
     }
 
     private void drawRegion(Coordinate2D pos, Image image) {

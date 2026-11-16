@@ -19,6 +19,7 @@ import java.util.function.Consumer;
 import javafx.application.Platform;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
+import javafx.collections.WeakListChangeListener;
 import javafx.css.PseudoClass;
 import javafx.event.ActionEvent;
 import javafx.fxml.FXML;
@@ -44,6 +45,9 @@ import proxy.auth.MicrosoftAuthServer;
 import util.PathUtils;
 
 public class GuiSettings {
+    private static final int MAX_ERROR_OUTPUT_CHARS = 100_000;
+    private ListChangeListener<String> errorListener;
+
     public TextField server;
     public DefaultIntField portLocal;
 
@@ -54,6 +58,7 @@ public class GuiSettings {
 
     public CheckBox markUnsaved;
     public CheckBox markOld;
+    public CheckBox markEmpty;
 
     public Button saveButton;
     public Tab errTab;
@@ -122,6 +127,7 @@ public class GuiSettings {
         extendedDistanceText.setValue(config.extendedRenderDistance);
         markUnsaved.setSelected(!config.disableMarkUnsavedChunks);
         markOld.setSelected(config.markOldChunks);
+        markEmpty.setSelected(!config.disableMarkEmptyChunks);
         renderOtherPlayers.setSelected(config.renderOtherPlayers);
         enableInfoMessages.setSelected(!config.disableInfoMessages);
         enableCaveRenderMode.setSelected(config.enableCaveRenderMode);
@@ -259,27 +265,59 @@ public class GuiSettings {
 
         ObservableList<String> messages = GuiManager.getMessages();
         errOutput.setText(join(messages));
+        errOutput.positionCaret(errOutput.getLength());
 
-        try {
-
-            GuiManager.getMessages().addListener((ListChangeListener<String>) change -> {
-                errOutput.setText(join(messages));
-            });
-        } catch (Exception ex) {
-            ex.printStackTrace(System.out);
+        // only register once per settings window, and weakly, so closed windows stop listening
+        if (errorListener != null) {
+            return;
         }
+
+        errorListener = change -> {
+            StringBuilder appended = new StringBuilder();
+            boolean removed = false;
+            while (change.next()) {
+                removed |= change.wasRemoved();
+                for (String message : change.getAddedSubList()) {
+                    appendMessage(appended, message);
+                }
+            }
+
+            if (removed || errOutput.getLength() + appended.length() > MAX_ERROR_OUTPUT_CHARS) {
+                errOutput.setText(join(messages));
+                errOutput.positionCaret(errOutput.getLength());
+            } else if (!appended.isEmpty()) {
+                if (errOutput.getLength() > 0) {
+                    appended.insert(0, '\n');
+                }
+                errOutput.appendText(appended.toString());
+            }
+        };
+        messages.addListener(new WeakListChangeListener<>(errorListener));
     }
 
-    private String join(ObservableList<String> list) {
-        return list.stream().reduce((a, b) -> {
-            if (a.length() == 0 || a.equals("\n")) {
-                return b;
-            } else if (b.length() == 0 || b.equals("\n")) {
-                return a;
-            } else {
-                return a + "\n " + b;
-            }
-        }).orElse("");
+    private static void appendMessage(StringBuilder sb, String message) {
+        String trimmed = message.stripTrailing();
+        if (trimmed.isEmpty()) {
+            return;
+        }
+        if (!sb.isEmpty()) {
+            sb.append('\n');
+        }
+        sb.append(trimmed);
+    }
+
+    /**
+     * Join the messages, keeping only the most recent text if there is more than the error output should hold.
+     */
+    private static String join(List<String> list) {
+        StringBuilder sb = new StringBuilder();
+        for (String message : list) {
+            appendMessage(sb, message);
+        }
+        if (sb.length() > MAX_ERROR_OUTPUT_CHARS) {
+            return sb.substring(sb.length() - MAX_ERROR_OUTPUT_CHARS);
+        }
+        return sb.toString();
     }
 
     /**
@@ -325,6 +363,7 @@ public class GuiSettings {
         config.extendedRenderDistance =  Math.abs((int) extendedDistance.getValue());
         config.disableMarkUnsavedChunks = !markUnsaved.isSelected();
         config.markOldChunks = markOld.isSelected();
+        config.disableMarkEmptyChunks = !markEmpty.isSelected();
         config.renderOtherPlayers = renderOtherPlayers.isSelected();
         config.disableInfoMessages = !enableInfoMessages.isSelected();
         config.enableCaveRenderMode = enableCaveRenderMode.isSelected();

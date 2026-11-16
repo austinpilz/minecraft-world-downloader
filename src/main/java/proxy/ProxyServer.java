@@ -41,6 +41,7 @@ public class ProxyServer extends Thread {
     @Override
     public void run() {
         setName("Proxy");
+        TrafficMonitor.enableIfRequested();
         
         String friendlyHost = connectionDetails.getFriendlyHost();
         System.out.println("Starting proxy for " + friendlyHost + ". Make sure to connect to localhost:" + connectionDetails.getPortLocal() + " instead of the regular server address.");
@@ -94,6 +95,7 @@ public class ProxyServer extends Thread {
                     attempt(() -> {
                         int bytesRead;
                         while ((bytesRead = streamFromClient.read(request)) != -1) {
+                            TrafficMonitor.bytesFromClient(bytesRead);
                             onServerBoundPacket.pushData(request, bytesRead);
                         }
                     }, (ex) -> {
@@ -114,6 +116,7 @@ public class ProxyServer extends Thread {
                 attempt(() -> {
                     int bytesRead;
                     while ((bytesRead = streamFromServer.read(reply)) != -1) {
+                        TrafficMonitor.bytesFromServer(bytesRead);
                         onClientBoundPacket.pushData(reply, bytesRead);
                     }
                 }, (ex) -> {

@@ -35,6 +35,8 @@ import org.apache.commons.io.FileUtils;
  */
 public class RegionImageHandler {
     private static final String CACHE_PATH = "image-cache";
+    private static final String EMPTY_CHUNKS_PATH = "empty-chunks";
+    private static final String WORLD_BORDER_PATH = "world-border";
     // side length of a region in blocks (32 chunks * 16 blocks) - kept in sync with Bounds.overlaps()
     private static final int REGION_BLOCK_SIZE = 512;
 
@@ -54,6 +56,8 @@ public class RegionImageHandler {
     // bounds/scale from the most recent drawAll() call, used by the periodic off-screen shrink sweep
     private volatile Bounds lastBounds;
     private volatile double lastBlocksPerPixel = 1;
+
+    private final EmptyChunkTracker emptyChunks = new EmptyChunkTracker(RegionImageHandler::emptyChunksPath);
 
     public RegionImageHandler() {
         this.regions = new ConcurrentHashMap<>();
@@ -108,6 +112,8 @@ public class RegionImageHandler {
 
     public void clear() {
         unload();
+        emptyChunks.clear();
+        WorldManager.getInstance().getWorldBorders().clear();
         attemptQuiet(() -> FileUtils.deleteDirectory(Paths.get(Config.getWorldOutputDir(), CACHE_PATH).toFile()));
     }
 
@@ -117,15 +123,69 @@ public class RegionImageHandler {
         }
 
         Coordinate2D region = coordinate.chunkToRegion();
-        RegionImages images = regions.computeIfAbsent(region,
-            coordinate2D -> RegionImages.loadRegion(activeDimension, region)
-        );
+        RegionImages images = regions.computeIfAbsent(region, this::createRegion);
 
         Coordinate2D local = coordinate.toRegionLocal();
 
         drawExecutor.execute(() -> imageMap.forEach((mode, image) -> images.getImage(mode).drawChunk(local, image)));
 
-        setChunkState(images, local, ChunkImageState.isSaved(isSaved));
+        setChunkState(images, local, isEmpty(coordinate) ? ChunkImageState.EMPTY : ChunkImageState.isSaved(isSaved));
+    }
+
+    /**
+     * Record whether the server sent this chunk without any blocks. Chunks that were empty are coloured as such once
+     * drawn, and stay that way in later sessions. If the server later sends blocks for the chunk, the mark is removed.
+     */
+    public void setChunkEmpty(CoordinateDim2D coordinate, boolean empty) {
+        if (!Config.markEmptyChunks()) {
+            return;
+        }
+        boolean changed = emptyChunks.setEmpty(coordinate, empty);
+
+        // chunks the server didn't send at all are never drawn, so colour them straight away
+        if (changed && empty && coordinate.getDimension().equals(activeDimension)) {
+            RegionImages images = regions.computeIfAbsent(coordinate.chunkToRegion(), this::createRegion);
+            setChunkState(images, coordinate.toRegionLocal(), ChunkImageState.EMPTY);
+        }
+    }
+
+    private boolean isEmpty(CoordinateDim2D coordinate) {
+        return Config.markEmptyChunks() && emptyChunks.isEmpty(coordinate);
+    }
+
+    public int countEmptyChunks() {
+        return emptyChunks.count();
+    }
+
+    /**
+     * Load the images for a region and colour the chunks in it that were received empty.
+     */
+    private RegionImages createRegion(Coordinate2D region) {
+        RegionImages images = RegionImages.loadRegion(activeDimension, region);
+        markEmptyChunks(images, region);
+        return images;
+    }
+
+    private void markEmptyChunks(RegionImages images, Coordinate2D region) {
+        if (!Config.markEmptyChunks()) {
+            return;
+        }
+        for (Coordinate2D chunk : emptyChunks.getChunksInRegion(region)) {
+            setChunkState(images, chunk.toRegionLocal(), ChunkImageState.EMPTY);
+        }
+    }
+
+    /**
+     * Make sure regions with empty chunks are shown, even if no chunk with blocks was ever drawn in them (e.g. a region
+     * that is entirely ungenerated).
+     */
+    private void loadEmptyChunkRegions() {
+        if (!Config.markEmptyChunks()) {
+            return;
+        }
+        for (Coordinate2D region : emptyChunks.getRegions()) {
+            regions.computeIfAbsent(region, this::createRegion);
+        }
     }
 
     public void setChunkState(Coordinate2D coords, ChunkImageState state) {
@@ -145,7 +205,7 @@ public class RegionImageHandler {
 
 
     public void markChunkSaved(CoordinateDim2D coordinate) {
-        setChunkState(coordinate, ChunkImageState.SAVED);
+        setChunkState(coordinate, isEmpty(coordinate) ? ChunkImageState.EMPTY : ChunkImageState.SAVED);
     }
 
     private void save(Map<Coordinate2D, RegionImages> regions, Dimension dim) {
@@ -165,6 +225,7 @@ public class RegionImageHandler {
         regions.forEach((coordinate, image) -> {
             attempt(image::save);
         });
+        emptyChunks.save();
 
         isSaving = false;
     }
@@ -181,15 +242,18 @@ public class RegionImageHandler {
      * Searches for all region files in a directory to load them in.
      */
     private void loadFromFile() {
-        new Thread(() -> attemptQuiet(() -> {
-            // walk one of the modes, check for the others if we find one
-            Files.walk(dimensionPath(this.activeDimension, ImageMode.NORMAL), 1)
-                .limit(32000)
-                .forEach(image -> attempt(() -> loadFromFile(regions, this.activeDimension, image)));
-        })).start();
+        new Thread(() -> {
+            attemptQuiet(() -> {
+                // walk one of the modes, check for the others if we find one
+                Files.walk(dimensionPath(this.activeDimension, ImageMode.NORMAL), 1)
+                    .limit(32000)
+                    .forEach(image -> attempt(() -> loadFromFile(image)));
+            });
+            loadEmptyChunkRegions();
+        }).start();
     }
 
-    private static void loadFromFile(Map<Coordinate2D, RegionImages> regions, Dimension dim, Path image) {
+    private void loadFromFile(Path image) {
         if (!image.toString().toLowerCase().endsWith("png") || image.getFileName().startsWith(SMALL_PREFIX)) {
             return;
         }
@@ -200,7 +264,7 @@ public class RegionImageHandler {
         int z = Integer.parseInt(parts[2]);
         Coordinate2D regionCoordinate = new Coordinate2D(x, z);
 
-        regions.computeIfAbsent(regionCoordinate, coord -> RegionImages.loadRegion(dim, coord));
+        regions.computeIfAbsent(regionCoordinate, this::createRegion);
     }
 
     public void setDimension(Dimension dimension) {
@@ -214,6 +278,7 @@ public class RegionImageHandler {
         }
 
         this.activeDimension = dimension;
+        emptyChunks.setDimension(dimension);
         loadFromFile();
     }
 
@@ -223,6 +288,25 @@ public class RegionImageHandler {
 
     static Path dimensionPath(Dimension dim, ImageMode mode) {
         return Paths.get(Config.getWorldOutputDir(), CACHE_PATH, mode.path(), dim.getPath());
+    }
+
+    /**
+     * Empty chunks are stored with the map images rather than in the world, so Minecraft never reads them.
+     */
+    static Path emptyChunksPath(Dimension dim) {
+        return cacheFile(EMPTY_CHUNKS_PATH, dim);
+    }
+
+    /**
+     * The world border the server sent, stored next to the empty chunks for the same reason.
+     */
+    public static Path worldBorderPath(Dimension dim) {
+        return cacheFile(WORLD_BORDER_PATH, dim);
+    }
+
+    private static Path cacheFile(String folder, Dimension dim) {
+        String name = dim.getName().replaceAll("[^A-Za-z0-9_.-]", "_");
+        return Paths.get(Config.getWorldOutputDir(), CACHE_PATH, folder, name + ".txt");
     }
 
     private void updateRenderMode() {
