@@ -8,6 +8,9 @@ import game.data.coordinates.Coordinate2D;
 import game.data.coordinates.CoordinateDim2D;
 import game.data.dimension.Dimension;
 import game.data.region.McaFile;
+import game.data.route.Route;
+import game.data.route.RouteExport;
+import game.data.route.RouteSession;
 import gui.images.ImageMode;
 import gui.images.RegionImageHandler;
 import gui.overlay.OverlayImportDialog;
@@ -22,8 +25,10 @@ import javafx.event.Event;
 import javafx.event.EventHandler;
 import javafx.event.EventType;
 import javafx.scene.control.*;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
+import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
@@ -36,6 +41,7 @@ public class RightClickMenu extends ContextMenu {
     private final MenuItem pauseMenuItem;
     private final GuiMap handler;
     private final Menu overlayMenu = new Menu("Map overlays");
+    private final Menu routeMenu = new Menu("Route");
     private final MenuItem copyShapeItem;
     private OverlayShape clickedShape;
 
@@ -147,6 +153,7 @@ public class RightClickMenu extends ContextMenu {
 
         menu.add(new Menu("Render mode", null, renderModes.toArray(new MenuItem[0])));
         menu.add(overlayMenu);
+        menu.add(routeMenu);
         menu.add(construct("Settings", e -> GuiManager.loadWindowSettings()));
 
         menu.add(construct("Save & Exit", e -> {
@@ -242,6 +249,72 @@ public class RightClickMenu extends ContextMenu {
         removeAll.setOnAction(e -> manager.clear());
         items.add(new SeparatorMenuItem());
         items.add(removeAll);
+    }
+
+    /**
+     * The route submenu depends on whether a route exists and whether it's running, so it's rebuilt every time the
+     * menu is shown.
+     */
+    public void refreshRouteItems() {
+        RouteSession session = WorldManager.getInstance().getRouteSession();
+        RouteSession.State state = session.getState();
+        Route route = session.getRoute();
+        List<MenuItem> items = routeMenu.getItems();
+        items.clear();
+
+        if (route != null) {
+            MenuItem info = new MenuItem(String.format("%s · %.1f km · %s", session.summary(), route.length() / 1000, route.description));
+            info.setDisable(true);
+            items.add(info);
+            items.add(new SeparatorMenuItem());
+        }
+
+        items.add(construct("Plan route from shown overlays...", e ->
+            RoutePlanDialog.show(handler.getDimension(), handler::flashStatusMessage)));
+
+        if (route != null) {
+            if (state == RouteSession.State.RUNNING) {
+                items.add(construct("Pause route", e -> session.pause()));
+            } else if (state != RouteSession.State.DONE || route.countOpen() > 0) {
+                items.add(construct(state == RouteSession.State.PAUSED ? "Resume route" : "Start route", e -> {
+                    if (!session.start()) {
+                        handler.flashStatusMessage(session.getMessage());
+                    }
+                }));
+            }
+            MenuItem skip = construct("Skip current stop", e -> session.skip());
+            skip.setDisable(session.getCurrentStop() == null);
+            items.add(skip);
+            items.add(construct("Re-order remaining stops from here", e -> session.replan()));
+            items.add(construct("Export route as overlay...", e -> exportRoute(route)));
+            items.add(construct("Clear route", e -> session.clear()));
+        }
+
+        items.add(new SeparatorMenuItem());
+        CheckMenuItem showItem = new CheckMenuItem("Show route");
+        showItem.setSelected(Config.showRoute());
+        showItem.setOnAction(e -> {
+            Config.setShowRoute(showItem.isSelected());
+            Config.save();
+        });
+        items.add(showItem);
+    }
+
+    private void exportRoute(Route route) {
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Export route as overlay");
+        chooser.setInitialFileName("route.json");
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON files", "*.json"));
+        File file = chooser.showSaveDialog(getOwnerWindow());
+        if (file == null) {
+            return;
+        }
+        try {
+            RouteExport.write(route, file.toPath());
+            handler.flashStatusMessage("Route written to " + file.getName());
+        } catch (IOException ex) {
+            handler.flashStatusMessage("Could not write " + file.getName() + ": " + ex.getMessage());
+        }
     }
 
     private void addDevOptions(List<MenuItem> menu, GuiMap handler) {

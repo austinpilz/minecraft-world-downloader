@@ -56,9 +56,11 @@ import game.data.maps.MapRegistry;
 import game.data.region.McaFile;
 import game.data.region.McaFilePair;
 import game.data.region.Region;
+import game.data.route.RouteSession;
 import game.data.villagers.VillagerManager;
 import gui.GuiManager;
 import gui.images.RegionImageHandler;
+import gui.overlay.OverlayManager;
 import packets.DataTypeProvider;
 import packets.builder.PacketBuilder;
 import proxy.PacketInjector;
@@ -115,6 +117,7 @@ public class WorldManager {
     // whether the player's position has been received this session, before that it is the one from level.dat
     private volatile boolean playerPositionKnown;
     private boolean reportedMissingChunks;
+    private RouteSession routeSession;
 
     public WorldManager() {
         this.isStarted = false;
@@ -180,6 +183,10 @@ public class WorldManager {
         this.renderDistanceExtender.reset();
 
         GuiManager.setDimension(this.dimension);
+        // the overlay coverage follows the dimension even without the map window, for the route planner
+        if (this.dimension != null && Config.getInstance() != null) {
+            OverlayManager.getInstance().getCoverage().setDimension(this.dimension);
+        }
     }
 
     public void setDimensionType(DimensionType dimensionType) {
@@ -848,6 +855,39 @@ public class WorldManager {
         if (missingChunkService != null) {
             missingChunkService.shutdown();
         }
+        if (routeSession != null) {
+            routeSession.shutdown();
+        }
+    }
+
+    /**
+     * The route the flight addon follows, planned from the overlay shapes. Created on first use; an unfinished route
+     * saved in the world folder is picked up again.
+     */
+    public synchronized RouteSession getRouteSession() {
+        if (routeSession == null) {
+            routeSession = new RouteSession(
+                chunk -> OverlayManager.getInstance().getCoverage().isCaptured(chunk),
+                () -> playerPositionKnown ? new double[]{playerPosition.getX(), playerPosition.getZ()} : null,
+                sessionStats::chunksPerSecond,
+                () -> PathUtils.toPath(Config.getWorldOutputDir(), RouteSession.FILE_NAME)
+            );
+        }
+        return routeSession;
+    }
+
+    /**
+     * The view distance the server told us it uses, 0 if not known yet.
+     */
+    public int getServerViewDistance() {
+        return serverViewDistance;
+    }
+
+    /**
+     * Whether the player's position has been received from the server this session.
+     */
+    public boolean isPlayerPositionKnown() {
+        return playerPositionKnown;
     }
 
     /**

@@ -22,6 +22,11 @@ import javafx.scene.paint.Color;
 public class OverlayManager {
     static final String SERVER_BORDER_LABEL = "World border";
 
+    private static OverlayManager instance;
+
+    /** the chunks of the shown shapes of a dimension, sorted and unique, with what they came from */
+    public record Selection(long[] chunks, int sets, int shapes) { }
+
     private final List<OverlayLayer> layers = new ArrayList<>();
 
     // entries from the config whose file could not be read, kept so they aren't lost when the config is saved
@@ -35,6 +40,61 @@ public class OverlayManager {
     private Dimension serverBorderDimension;
     private Border serverBorder;
     private OverlayShape serverBorderShape;
+
+    /**
+     * The overlays of this run, shared by the map and the route planner so routes can be planned without the map
+     * window. Loaded from the config on first use.
+     */
+    public static synchronized OverlayManager getInstance() {
+        if (instance == null) {
+            instance = new OverlayManager();
+            if (Config.getInstance() != null) {
+                instance.loadFromConfig();
+            }
+        }
+        return instance;
+    }
+
+    /**
+     * Every chunk touched by the shown shapes (visible layer, set not hidden) of the given dimension. Large shapes
+     * that aren't coverage-tracked are included. The server's world border is not a shown shape.
+     */
+    public Selection collectVisibleChunks(Dimension dimension) {
+        long[] chunks = new long[1024];
+        int[] count = {0};
+        int sets = 0;
+        int shapes = 0;
+        long[][] holder = {chunks};
+        for (OverlayLayer layer : List.copyOf(layers)) {
+            if (!layer.isVisible() || !layer.appliesTo(dimension)) {
+                continue;
+            }
+            for (OverlaySet set : layer.getSets()) {
+                if (!layer.isSetVisible(set) || set.getShapes().isEmpty()) {
+                    continue;
+                }
+                sets++;
+                for (OverlayShape shape : set.getShapes()) {
+                    shapes++;
+                    shape.forEachChunk(chunk -> {
+                        if (count[0] == holder[0].length) {
+                            holder[0] = java.util.Arrays.copyOf(holder[0], holder[0].length * 2);
+                        }
+                        holder[0][count[0]++] = chunk;
+                    });
+                }
+            }
+        }
+        long[] res = java.util.Arrays.copyOf(holder[0], count[0]);
+        java.util.Arrays.sort(res);
+        int n = 0;
+        for (int i = 0; i < res.length; i++) {
+            if (i == 0 || res[i] != res[i - 1]) {
+                res[n++] = res[i];
+            }
+        }
+        return new Selection(java.util.Arrays.copyOf(res, n), sets, shapes);
+    }
 
     public void loadFromConfig() {
         for (OverlayEntry entry : Config.getOverlays()) {

@@ -130,6 +130,41 @@ class ChunkCoverageTest {
     }
 
     @Test
+    void capturedSetIsReadableWithoutUpdate() {
+        ChunkCoverage coverage = new ChunkCoverage();
+        assertThat(coverage.getDimension()).isNull();
+        // nothing is tracked before a dimension is requested
+        coverage.chunkSaved(Dimension.OVERWORLD, new Coordinate2D(0, 0));
+        assertThat(coverage.isCaptured(ChunkCoverage.key(0, 0))).isFalse();
+
+        coverage.reset(Dimension.OVERWORLD);
+        coverage.chunkSaved(Dimension.OVERWORLD, new Coordinate2D(0, 0));
+        coverage.chunkSaved(Dimension.NETHER, new Coordinate2D(1, 0));
+        assertThat(coverage.getDimension()).isEqualTo(Dimension.OVERWORLD);
+        assertThat(coverage.isCaptured(ChunkCoverage.key(0, 0))).isTrue();
+        assertThat(coverage.isCaptured(ChunkCoverage.key(1, 0))).isFalse();
+        assertThat(coverage.countMissing(new long[]{ChunkCoverage.key(0, 0), ChunkCoverage.key(1, 0), ChunkCoverage.key(2, 0)})).isEqualTo(2);
+
+        coverage.reset(Dimension.NETHER);
+        assertThat(coverage.isCaptured(ChunkCoverage.key(0, 0))).isFalse();
+    }
+
+    @Test
+    void largeShapesStillListTheirChunks() {
+        OverlayShape border = OverlayShape.rectangle(-8192, -8192, 8192, 8192);
+        assertThat(border.isCoverageTracked()).isFalse();
+        assertThat(border.boundingChunks()).isEqualTo(1024L * 1024);
+        long[] count = {0};
+        border.forEachChunk(chunk -> count[0]++);
+        assertThat(count[0]).isEqualTo(1024L * 1024);
+
+        OverlayShape small = OverlayShape.rectangle(0, 0, 32, 16);
+        java.util.List<Long> chunks = new ArrayList<>();
+        small.forEachChunk(chunks::add);
+        assertThat(chunks).containsExactly(ChunkCoverage.key(0, 0), ChunkCoverage.key(1, 0));
+    }
+
+    @Test
     void chunksInRegionHeader() {
         byte[] header = new byte[4096];
         // local chunk 0,0 and local chunk 1,1 (index 33) are present, local chunk 2,0 has an offset but no size

@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import util.PathUtils;
 
@@ -23,8 +24,9 @@ import util.PathUtils;
  * drawn as done. Chunks already in the world folder are read from the region file headers when the dimension changes,
  * chunks saved after that are reported as they are written.
  *
- * Other threads only hand over chunks through a queue, the captured set and the per-shape counts are only touched on
- * the JavaFX thread in {@link #update}.
+ * The captured set itself is thread-safe and kept up to date from whichever thread saves a chunk, so the route
+ * planner can read it without the map window ({@link #isCaptured}). The per-shape counts are only touched on the
+ * JavaFX thread in {@link #update}, which works through the queue of newly captured chunks.
  */
 public class ChunkCoverage {
     // larger shapes (e.g. a world border) are not tracked, they won't be completed anyway and would cost a lot of memory
@@ -36,7 +38,8 @@ public class ChunkCoverage {
     private volatile Dimension requestedDimension;
 
     private Dimension dimension;
-    private final Set<Long> captured = new HashSet<>();
+    // chunks saved in the requested dimension, written from any thread
+    private final Set<Long> captured = ConcurrentHashMap.newKeySet();
 
     // tracked shapes of the current dimension, indexed by the regions they overlap
     private final Map<Long, List<OverlayShape>> shapesByRegion = new HashMap<>();
@@ -72,14 +75,65 @@ public class ChunkCoverage {
      */
     void reset(Dimension dimension) {
         requestedDimension = dimension;
+        captured.clear();
         pending.add(new Batch(dimension, new long[0], true));
     }
 
     /**
-     * Called (from any thread) when a chunk has been saved.
+     * Called (from any thread) when a chunk has been saved. Chunks of other dimensions than the one being tracked
+     * are ignored.
      */
     public void chunkSaved(Dimension dimension, Coordinate2D chunk) {
-        pending.add(new Batch(dimension, new long[]{key(chunk.getX(), chunk.getZ())}, false));
+        long[] added = addAll(dimension, new long[]{key(chunk.getX(), chunk.getZ())});
+        if (added.length > 0) {
+            pending.add(new Batch(dimension, added, false));
+        }
+    }
+
+    /**
+     * Add to the captured set, returning the chunks that weren't in it yet.
+     */
+    private long[] addAll(Dimension dimension, long[] chunks) {
+        if (dimension == null || !dimension.equals(requestedDimension)) {
+            return new long[0];
+        }
+        long[] added = new long[chunks.length];
+        int n = 0;
+        for (long chunk : chunks) {
+            if (captured.add(chunk)) {
+                added[n++] = chunk;
+            }
+        }
+        return n == chunks.length ? added : Arrays.copyOf(added, n);
+    }
+
+    /**
+     * Whether the chunk has been saved in the dimension being tracked. Safe to call from any thread.
+     *
+     * @param chunk a {@link #key}
+     */
+    public boolean isCaptured(long chunk) {
+        return captured.contains(chunk);
+    }
+
+    /**
+     * How many of the given chunks haven't been saved yet. Safe to call from any thread.
+     */
+    public int countMissing(long[] chunks) {
+        int missing = 0;
+        for (long chunk : chunks) {
+            if (!captured.contains(chunk)) {
+                missing++;
+            }
+        }
+        return missing;
+    }
+
+    /**
+     * The dimension whose chunks are tracked, null before the first {@link #setDimension}.
+     */
+    public Dimension getDimension() {
+        return requestedDimension;
     }
 
     private void readSavedChunks(Dimension dimension) {
@@ -97,7 +151,7 @@ public class ChunkCoverage {
             try (InputStream input = new FileInputStream(file)) {
                 // region files are stored relative to the configured world center
                 Coordinate2D region = new Coordinate2D(Integer.parseInt(parts[1]), Integer.parseInt(parts[2])).offsetRegionToActual();
-                long[] chunks = chunksInHeader(input.readNBytes(REGION_HEADER_SIZE), region.getX(), region.getZ());
+                long[] chunks = addAll(dimension, chunksInHeader(input.readNBytes(REGION_HEADER_SIZE), region.getX(), region.getZ()));
                 if (chunks.length > 0) {
                     pending.add(new Batch(dimension, chunks, false));
                 }
@@ -141,18 +195,17 @@ public class ChunkCoverage {
         Batch batch;
         while ((batch = pending.poll()) != null) {
             if (batch.reset) {
+                // the captured set was already cleared when the reset was queued
                 dimension = batch.dimension;
-                captured.clear();
                 rebuild = true;
                 continue;
             }
-            if (!batch.dimension.equals(dimension)) {
+            if (!batch.dimension.equals(dimension) || rebuild) {
+                // the index rebuild below counts everything in the captured set
                 continue;
             }
             for (long chunk : batch.chunks) {
-                if (captured.add(chunk) && !rebuild) {
-                    countChunk(chunk);
-                }
+                countChunk(chunk);
             }
         }
 

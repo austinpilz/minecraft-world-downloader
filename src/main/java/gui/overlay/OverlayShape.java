@@ -4,6 +4,7 @@ import gui.Bounds;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.LongConsumer;
 import javafx.scene.paint.Color;
 
 /**
@@ -205,19 +206,45 @@ public class OverlayShape {
     }
 
     private long[] computeChunks() {
+        if (boundingChunks() > ChunkCoverage.MAX_SHAPE_CHUNKS) {
+            return null;
+        }
+        List<Long> res = new ArrayList<>();
+        forEachChunk(res::add);
+        long[] sorted = res.stream().mapToLong(Long::longValue).toArray();
+        Arrays.sort(sorted);
+        return sorted;
+    }
+
+    /**
+     * Number of chunks in the bounding box, an upper bound for the chunks the shape touches.
+     */
+    public long boundingChunks() {
         if (kind == Kind.POINT) {
-            return new long[]{ChunkCoverage.key((int) Math.floor(x[0] / 16), (int) Math.floor(z[0] / 16))};
+            return 1;
+        }
+        int minChunkX = (int) Math.floor((minX + CHUNK_EDGE_MARGIN) / 16);
+        int maxChunkX = (int) Math.floor((maxX - CHUNK_EDGE_MARGIN) / 16);
+        int minChunkZ = (int) Math.floor((minZ + CHUNK_EDGE_MARGIN) / 16);
+        int maxChunkZ = (int) Math.floor((maxZ - CHUNK_EDGE_MARGIN) / 16);
+        return (long) (maxChunkX - minChunkX + 1) * (maxChunkZ - minChunkZ + 1);
+    }
+
+    /**
+     * Visit every chunk this shape touches, as {@link ChunkCoverage#key} values, however large the shape is. Doesn't
+     * touch the cached chunk list, so it can be called from any thread.
+     */
+    public void forEachChunk(LongConsumer consumer) {
+        if (kind == Kind.POINT) {
+            consumer.accept(ChunkCoverage.key((int) Math.floor(x[0] / 16), (int) Math.floor(z[0] / 16)));
+            return;
         }
 
         int minChunkX = (int) Math.floor((minX + CHUNK_EDGE_MARGIN) / 16);
         int maxChunkX = (int) Math.floor((maxX - CHUNK_EDGE_MARGIN) / 16);
         int minChunkZ = (int) Math.floor((minZ + CHUNK_EDGE_MARGIN) / 16);
         int maxChunkZ = (int) Math.floor((maxZ - CHUNK_EDGE_MARGIN) / 16);
-        if ((long) (maxChunkX - minChunkX + 1) * (maxChunkZ - minChunkZ + 1) > ChunkCoverage.MAX_SHAPE_CHUNKS) {
-            return null;
-        }
 
-        List<Long> res = new ArrayList<>();
         for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
             for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
                 // shrink the chunk slightly, so a shape edge lying exactly on a chunk border doesn't claim the neighbour
@@ -226,13 +253,10 @@ public class OverlayShape {
                 double right = chunkX * 16 + 16 - CHUNK_EDGE_MARGIN;
                 double bottom = chunkZ * 16 + 16 - CHUNK_EDGE_MARGIN;
                 if (overlapsBox(left, top, right, bottom)) {
-                    res.add(ChunkCoverage.key(chunkX, chunkZ));
+                    consumer.accept(ChunkCoverage.key(chunkX, chunkZ));
                 }
             }
         }
-        long[] sorted = res.stream().mapToLong(Long::longValue).toArray();
-        Arrays.sort(sorted);
-        return sorted;
     }
 
     private boolean overlapsBox(double left, double top, double right, double bottom) {
