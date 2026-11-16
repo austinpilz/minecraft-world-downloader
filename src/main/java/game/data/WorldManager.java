@@ -484,10 +484,10 @@ public class WorldManager {
         // remove empty regions
         regions.entrySet().removeIf(el -> el.getValue().isEmpty());
 
+        // No System.gc() here: saving runs every 12 seconds, and forcing a full, stop-the-world collection of a heap
+        // that can be many GB each time also froze the map while it ran. The garbage collector frees the saved chunks
+        // on its own.
         savingDimension.remove(dimension);
-
-        // suggest GC to clear up some memory that may have been freed by saving
-        System.gc();
     }
 
     /**

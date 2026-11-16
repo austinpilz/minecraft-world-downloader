@@ -5,6 +5,7 @@ import game.data.WorldManager;
 import game.data.coordinates.Coordinate2D;
 import game.data.coordinates.Coordinate3D;
 
+import java.lang.management.ManagementFactory;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -106,6 +107,19 @@ public final class TrafficMonitor {
         return TimeUnit.NANOSECONDS.toMillis(nanos);
     }
 
+    /**
+     * Memory the whole process has claimed, including everything outside the Java heap (native libraries, graphics
+     * drivers). On Windows this is the "commit size" Task Manager shows, which is what ran out when the downloader
+     * crashed overnight with a 16 GB heap that was only 2 GB full. A steady climb here while the heap stays flat
+     * points to a native leak. On other systems the JVM reports total virtual memory instead, which is less telling.
+     */
+    private static long processCommittedBytes() {
+        if (ManagementFactory.getOperatingSystemMXBean() instanceof com.sun.management.OperatingSystemMXBean os) {
+            return os.getCommittedVirtualMemorySize();
+        }
+        return -1;
+    }
+
     private static void report() {
         try {
             long serverBytes = bytesFromServer.sumThenReset();
@@ -139,16 +153,21 @@ public final class TrafficMonitor {
                 position = "(" + chunk.getX() + ", " + chunk.getZ() + ")";
             }
 
+            Runtime runtime = Runtime.getRuntime();
+            long heapUsed = runtime.totalMemory() - runtime.freeMemory();
+
             System.out.printf(
                 "[traffic] SERVER sent %,d KB: %d chunks, %d batches (%d started), %d center updates, %d unloads"
                     + " | CLIENT: %d batch acks, %d moves, at chunk %s"
                     + " | PROXY: relaying took %d ms (slowest packet %d ms), client writes %d ms (slowest %d ms),"
                     + " %d extended chunks sent, %d queued"
-                    + " | last chunk from server %.1fs ago, last byte %.1fs ago%n",
+                    + " | last chunk from server %.1fs ago, last byte %.1fs ago"
+                    + " | MEMORY: process %,d MB committed, heap %,d MB used%n",
                 serverBytes / 1024, chunks, batchEnds, batchStarts, centerUpdates, forgets,
                 batchAcks, moves, position,
                 ms(relay), ms(slowestRelay), ms(write), ms(slowestWrite), injected, injectedQueued,
-                (now - lastChunkFromServer) / 1e9, (now - lastBytesFromServer) / 1e9
+                (now - lastChunkFromServer) / 1e9, (now - lastBytesFromServer) / 1e9,
+                processCommittedBytes() >> 20, heapUsed >> 20
             );
         } catch (Exception ex) {
             System.out.println("[traffic] Could not report: " + ex);

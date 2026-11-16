@@ -22,25 +22,32 @@ public class CompressionManager {
     /**
      * Compresses the stream if the size is greater than the compression limit.
      * Source: https://dzone.com/articles/how-compress-and-uncompress
+     *
+     * Every Deflater holds roughly 256 KB of native zlib memory that the garbage collector can't see, so it is ended
+     * as soon as we're done with it rather than left for the JDK's cleaner to free whenever a GC happens to run. This
+     * runs for every compressed packet sent to the client and every chunk written to a region file.
      */
     public static byte[] zlibCompress(byte[] input) throws IOException {
         Deflater deflater = new Deflater();
-        deflater.setInput(input);
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream(input.length);
-        deflater.finish();
-        byte[] buffer = new byte[1024];
-        while (!deflater.finished()) {
-            int count = deflater.deflate(buffer); // returns the generated code... index
-            outputStream.write(buffer, 0, count);
+        try {
+            deflater.setInput(input);
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream(input.length);
+            deflater.finish();
+            byte[] buffer = new byte[1024];
+            while (!deflater.finished()) {
+                int count = deflater.deflate(buffer); // returns the generated code... index
+                outputStream.write(buffer, 0, count);
+            }
+            outputStream.close();
+            return outputStream.toByteArray();
+        } finally {
+            deflater.end();
         }
-        outputStream.close();
-        return outputStream.toByteArray();
     }
 
     public static byte[] zlibDecompress(byte[] input) {
-        InflaterInputStream inflater = new InflaterInputStream(new ByteArrayInputStream(input));
-
-        try {
+        // closing the stream ends its Inflater, releasing its native memory straight away (see zlibCompress)
+        try (InflaterInputStream inflater = new InflaterInputStream(new ByteArrayInputStream(input))) {
             return IOUtils.toByteArray(inflater);
         } catch (IOException e) {
             e.printStackTrace();
